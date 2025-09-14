@@ -1,6 +1,6 @@
 export const CONFIG = {
   targetFPS: 90,
-  groundSize: 400, // "virtuelle Meter" für die weite Ebene
+  groundSize: 400,
   sky: {
     topColor: 0x0b1220,
     bottomColor: 0x152237
@@ -10,11 +10,11 @@ export const CONFIG = {
     dir:  { color: 0xffffff, intensity: 1.0, position: [10, 15, 6] }
   },
   turret: {
-    height: 1.20,      // Pivot-Höhe über Boden (in Metern)
-    yawSpeed: 6.0,     // rad/s Zielverfolgungs-"Dämpfung"
+    height: 1.20,
+    yawSpeed: 6.0,
     pitchSpeed: 6.0,
-    minPitch: -0.35,   // runter
-    maxPitch:  0.95,   // rauf
-    crosshairDistance: 200, // wie weit vorne der Zielpunkt schwebt
+    minPitch: -0.35,
+    maxPitch:  0.95,
+    crosshairDistance: 200
   }
 };
