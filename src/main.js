@@ -20,11 +20,10 @@ function init() {
   renderer.shadowMap.enabled = false;
   document.body.appendChild(renderer.domElement);
 
-  // VR Button (optionale Features minimal halten)
-  const btn = VRButton.createButton(renderer, {
-    optionalFeatures: ['local-floor']
-  });
-  document.body.appendChild(btn);
+  // VR Button – nur minimale optionale Features
+  document.body.appendChild(
+    VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] })
+  );
 
   // Scene & Camera
   scene = new THREE.Scene();
@@ -61,8 +60,7 @@ function init() {
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
   // Licht
-  const hemi = new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity);
-  scene.add(hemi);
+  scene.add(new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity));
   const dir = new THREE.DirectionalLight(CONFIG.lights.dir.color, CONFIG.lights.dir.intensity);
   dir.position.set(...CONFIG.lights.dir.position);
   scene.add(dir);
@@ -75,6 +73,7 @@ function init() {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
+
   const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x2e3b4b, 0x1b2430);
   grid.position.y = 0.01;
   scene.add(grid);
@@ -97,6 +96,7 @@ function onWindowResize() {
 }
 
 function startLoop() {
+  // Lokale "last" Variable im Closure → kein Zugriff vor Initialisierung möglich
   let last = performance.now();
 
   renderer.setAnimationLoop((time) => {
