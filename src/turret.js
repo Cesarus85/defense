@@ -62,7 +62,7 @@ export class Turret {
     sight.position.set(0, 0.15, -0.12);
     this.pitchPivot.add(sight);
 
-    // Griffe (leicht zum Spieler versetzt)
+    // Griffe
     const handleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.16, 16);
     const handleMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
     this.leftHandle  = new THREE.Mesh(handleGeo, handleMat.clone());
@@ -110,23 +110,26 @@ export class Turret {
     return g;
   }
 
-  // ✅ Nur Winkel invertieren (nicht den Vektor), damit „vorne“ vorne bleibt.
+  // Alte API bleibt verfügbar
   setAimDirection(worldDir) {
     const xzLen = Math.hypot(worldDir.x, worldDir.z);
-    let yaw   = Math.atan2(worldDir.x, -worldDir.z); // -Z = vorwärts
+    let yaw   = Math.atan2(worldDir.x, -worldDir.z);
     let pitch = Math.atan2(worldDir.y, xzLen);
+    this.setTargetAngles(yaw, pitch);
+  }
 
-    if (CONFIG.turret.invertYaw)   yaw   = -yaw;
-    if (CONFIG.turret.invertPitch) pitch = -pitch;
-
+  // ✅ Neue API: Zielwinkel direkt setzen (vor Clamp)
+  setTargetAngles(yaw, pitch) {
+    // Clamp
+    const p = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
     this._targetYaw = yaw;
-    this._targetPitch = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
+    this._targetPitch = p;
   }
 
   update(dt, camera) {
     const yspd = CONFIG.turret.yawSpeed;
     const pspd = CONFIG.turret.pitchSpeed;
-    this.yawPivot.rotation.y = lerpAngle(this.yawPivot.rotation.y, this._targetYaw, 1 - Math.exp(-yspd * dt));
+    this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   1 - Math.exp(-yspd * dt));
     this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, 1 - Math.exp(-pspd * dt));
 
     if (this.crosshairRenderEnabled) {
