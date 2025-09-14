@@ -78,4 +78,21 @@ export const CONFIG = {
       fill: 0x93b5ff
     }
   }
+    enemies: {
+    // Spawns
+    spawnRadius: 120,      // Radius des Spawn-Kreises um das Turret
+    attackRadius: 3.2,     // Abstand, in dem der Gegner "angekommen" ist
+    firstWaveCount: 6,     // Startanzahl
+    waveGrowth: 1.35,      // Multiplikator pro Welle
+    spawnInterval: 0.35,   // Abstand zwischen Einzelsplits
+    wavePause: 4.0,        // Pause nach Welle (wenn alle tot)
+
+    // Typ "grunt" (Bodenläufer)
+    grunt: {
+      speed: 3.0,          // m/s
+      health: 40,          // HP
+      reward: 10           // Punkte pro Kill
+    }
+  },
+
 };
