@@ -1,4 +1,4 @@
-// XR-Unterstützung prüfen (Step 0 logik beibehalten)
+// XR-Unterstützung prüfen (Step 0 Logik)
 export async function setupXRSupport({ statusEl } = {}) {
   let supported = false;
 
@@ -18,32 +18,50 @@ export async function setupXRSupport({ statusEl } = {}) {
   return supported;
 }
 
-// NEW: AR-Session starten und Hit-Test-Quelle anlegen
+// AR-Session starten: required local-floor & zwei HitTest-Quellen
 export async function startARSession(renderer) {
   if (!navigator.xr) throw new Error('WebXR nicht verfügbar');
 
-  // Kamerareferenztyp für Three (fällt zurück, wenn nicht vorhanden)
   renderer.xr.setReferenceSpaceType('local-floor');
 
   const session = await navigator.xr.requestSession('immersive-ar', {
-    requiredFeatures: ['hit-test'],
-    optionalFeatures: ['local-floor', 'anchors'] // optional, blockiert nicht wenn unsupported
+    requiredFeatures: ['hit-test', 'local-floor'],
+    optionalFeatures: ['anchors'] // gern später für permanentes Verankern
   });
 
-  // Three.js übernimmt XRWebGLLayer & RenderState
   await renderer.xr.setSession(session);
 
-  // Referenzräume
   const referenceSpace =
     await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
-
   const viewerSpace = await session.requestReferenceSpace('viewer');
-  const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
 
-  // Cleanup, falls Session endet
+  // 1) Downward Hit-Test (vom Headset gerade nach unten)
+  let viewerDownHitTestSource = null;
+  try {
+    const hasXRRay = typeof XRRay !== 'undefined';
+    const offsetRay = hasXRRay
+      ? new XRRay({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
+      : null; // Fallback: lässt den UA den Default bestimmen
+    viewerDownHitTestSource = await session.requestHitTestSource(
+      offsetRay ? { space: viewerSpace, offsetRay } : { space: viewerSpace }
+    );
+  } catch (e) {
+    console.warn('Downward hit-test source fehlgeschlagen:', e);
+  }
+
+  // 2) Controller-Transient-HitTest (gezielter Ray vom Controller)
+  let transientHitTestSource = null;
+  try {
+    // profile optional – viele UAs ignorieren/auto-matchen
+    transientHitTestSource = await session.requestHitTestSourceForTransientInput({});
+  } catch (e) {
+    console.warn('Transient hit-test source fehlgeschlagen:', e);
+  }
+
   session.addEventListener('end', () => {
-    try { hitTestSource.cancel(); } catch {}
+    try { viewerDownHitTestSource?.cancel(); } catch {}
+    try { transientHitTestSource?.cancel(); } catch {}
   });
 
-  return { session, referenceSpace, viewerSpace, hitTestSource };
+  return { session, referenceSpace, viewerSpace, viewerDownHitTestSource, transientHitTestSource };
 }
