@@ -1,17 +1,10 @@
-// /src/xr-setup.js
-
-// XR-Unterstützung prüfen (Step 0 Logik)
+// XR-Unterstützung prüfen
 export async function setupXRSupport({ statusEl } = {}) {
   let supported = false;
-
   if ('xr' in navigator && typeof navigator.xr.isSessionSupported === 'function') {
-    try {
-      supported = await navigator.xr.isSessionSupported('immersive-ar');
-    } catch (err) {
-      console.warn('navigator.xr.isSessionSupported failed:', err);
-    }
+    try { supported = await navigator.xr.isSessionSupported('immersive-ar'); }
+    catch (err) { console.warn('navigator.xr.isSessionSupported failed:', err); }
   }
-
   if (statusEl) {
     statusEl.textContent += supported
       ? ' | AR-Unterstützung: verfügbar'
@@ -20,53 +13,64 @@ export async function setupXRSupport({ statusEl } = {}) {
   return supported;
 }
 
-// AR-Session starten: Hit-Tests mit entityTypes (fix für WebXR-Polyfill/Emulator)
+// Kompatible Hilfsfunktionen (neue/alte Polyfill-Versionen)
+async function requestHitTestSourceCompat(session, opts) {
+  try {
+    return await session.requestHitTestSource(opts); // neuer Pfad (mit entityTypes/offsetRay erlaubt)
+  } catch (e) {
+    // Fallback: ohne entityTypes erneut versuchen
+    const { entityTypes, ...rest } = opts || {};
+    try {
+      return await session.requestHitTestSource(rest);
+    } catch (e2) {
+      console.warn('requestHitTestSource (compat) fehlgeschlagen:', e2);
+      return null;
+    }
+  }
+}
+
+async function requestTransientHitTestSourceCompat(session, opts) {
+  try {
+    return await session.requestHitTestSourceForTransientInput(opts);
+  } catch (e) {
+    try {
+      return await session.requestHitTestSourceForTransientInput({});
+    } catch (e2) {
+      console.warn('requestHitTestSourceForTransientInput (compat) fehlgeschlagen:', e2);
+      return null;
+    }
+  }
+}
+
 export async function startARSession(renderer) {
   if (!navigator.xr) throw new Error('WebXR nicht verfügbar');
 
   renderer.xr.setReferenceSpaceType('local-floor');
 
   const session = await navigator.xr.requestSession('immersive-ar', {
-    requiredFeatures: ['hit-test'],           // 'local-floor' kann Emulatoren stören → optional unten als refSpace
+    requiredFeatures: ['hit-test'],
     optionalFeatures: ['local-floor', 'anchors']
   });
 
   await renderer.xr.setSession(session);
 
-  // Referenzräume
   const referenceSpace =
     await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
   const viewerSpace = await session.requestReferenceSpace('viewer');
 
-  // Gemeinsame Optionen mit entityTypes => verhindert "includes of undefined"
-  const baseHitOpts = { space: viewerSpace, entityTypes: ['plane', 'point'] };
-
-  // 1) Downward Hit-Test (vom Headset nach unten)
-  let viewerDownHitTestSource = null;
-  try {
-    // abwärts gerichteter Ray, falls XRRay verfügbar ist
-    const hitOpts = { ...baseHitOpts };
-    if (typeof XRRay !== 'undefined') {
-      hitOpts.offsetRay = new XRRay({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
-    }
-    viewerDownHitTestSource = await session.requestHitTestSource(hitOpts);
-  } catch (e) {
-    console.warn('Downward hit-test source fehlgeschlagen:', e);
+  // Downward-Hit-Test (vom Headset nach unten)
+  const baseOpts = { space: viewerSpace, entityTypes: ['plane', 'point'] };
+  const downOpts = { ...baseOpts };
+  if (typeof XRRay !== 'undefined') {
+    downOpts.offsetRay = new XRRay({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   }
+  const viewerDownHitTestSource = await requestHitTestSourceCompat(session, downOpts);
 
-  // 2) Controller-Transient-HitTest (gezielter Ray vom Controller)
-  let transientHitTestSource = null;
-  try {
-    // Profile sind optional; entityTypes zwingend gegen Polyfill-Bug
-    transientHitTestSource = await session.requestHitTestSourceForTransientInput({
-      entityTypes: ['plane', 'point']
-      // profile: 'generic-trigger'  // optional; viele Polyfills ignorieren das
-    });
-  } catch (e) {
-    console.warn('Transient hit-test source fehlgeschlagen:', e);
-  }
+  // Controller-Transient-Hit-Test
+  const transientHitTestSource = await requestTransientHitTestSourceCompat(session, {
+    entityTypes: ['plane', 'point']
+  });
 
-  // Cleanup
   session.addEventListener('end', () => {
     try { viewerDownHitTestSource?.cancel(); } catch {}
     try { transientHitTestSource?.cancel(); } catch {}
