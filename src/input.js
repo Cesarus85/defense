@@ -203,6 +203,20 @@ export function createInput(renderer, scene, camera, opts = {}) {
       return { ok: true, dy: dyFiltered, dp: dpFiltered };
     },
 
+    // Neue Funktion für 'absolute' Modus: Liefert die absolute Aim-Richtung als Vector3
+    getAimDirection() {
+      if (!state.hasVR || !CONFIG.turret.requireGrabToAim || !state.bothGrabStable) return null;
+
+      const ori = getCurrentYawPitch();
+      if (!ori) return null;
+
+      // Debugging: Log Yaw/Pitch, um zu prüfen, ob Funktion aufgerufen wird
+      // console.log('Absolute Aim: Yaw', ori.yaw, 'Pitch', ori.pitch);
+
+      const xz = Math.cos(ori.pitch);
+      return new THREE.Vector3(Math.sin(ori.yaw) * xz, Math.sin(ori.pitch), -Math.cos(ori.yaw) * xz).normalize();
+    },
+
     // Desktop-Test (nicht VR): liefert Richtung aus Maus
     getDesktopDir() {
       const xz = Math.cos(state.mousePitch);
