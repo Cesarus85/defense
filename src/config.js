@@ -79,6 +79,32 @@ export const CONFIG = {
     }
   },
 
+    grips: {
+    // Umschalten: 'front-horizontal' (bisher) oder 'side-vertical' (neu)
+    mode: 'front-horizontal',
+
+    front: {
+      spread: 0.22,     // Abstand links/rechts von der Mitte (m)
+      forward: 0.26,    // nach vorn (lokal +Z)
+      height: 0.02,     // leicht über dem Pivot
+      length: 0.16,     // Griff-Länge
+      radius: 0.03,     // Griff-Radius
+      rollDeg: 90       // z-Rotation, 90° = horizontaler Stab
+    },
+
+    side: {
+      spread: 0.28,     // weiter außen am Gehäuse
+      forward: 0.10,    // etwas nach vorn
+      height: 0.02,     // nahe am Pivot
+      length: 0.16,
+      radius: 0.03,
+      tiltInDeg: 12     // Griffe leicht nach innen geneigt (ergonomisch)
+    },
+
+    color: 0x8899aa     // Materialfarbe der Griffe
+  },
+
+
   // Gegner / Wellen
   enemies: {
     spawnRadius: 120,
