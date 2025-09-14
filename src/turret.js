@@ -129,8 +129,10 @@ export class Turret {
   update(dt, camera) {
     const yspd = CONFIG.turret.yawSpeed;
     const pspd = CONFIG.turret.pitchSpeed;
-    this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   1 - Math.exp(-yspd * dt));
-    this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, 1 - Math.exp(-pspd * dt));
+    // Alte: this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   1 - Math.exp(-yspd * dt));
+    // Neu: Stärkeres Lerp für weniger Behaglichkeit
+    this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   Math.min(1, yspd * dt * 2));  // *2 für aggressiver
+    this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, Math.min(1, pspd * dt * 2));
 
     if (this.crosshairRenderEnabled) {
       const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(this.pitchPivot.getWorldQuaternion(new THREE.Quaternion()));
