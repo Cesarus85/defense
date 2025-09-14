@@ -125,7 +125,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
     let yaw   = Math.atan2(fwd.x, -fwd.z); // -Z = vor
     let pitch = Math.atan2(fwd.y, xz);
 
-    // Neu: Pitch-Offset anwenden, um Initial-Down zu verhindern (natürliche Handhaltung)
+    // Pitch-Offset anwenden (für 'absolute'-Modus)
     pitch += CONFIG.turret.pitchOffset;
 
     return { yaw, pitch };
@@ -199,6 +199,9 @@ export function createInput(renderer, scene, camera, opts = {}) {
       const dy = shortestAngle(ori.yaw - state.refYaw);
       const dp = shortestAngle(ori.pitch - state.refPitch);
 
+      // Debugging: Log Delta-Pitch, um Initial-Down zu analysieren
+      // console.log('Delta Pitch:', dp);
+
       // Deadzone
       const dz = THREE.MathUtils.degToRad(CONFIG.turret.deadzoneDeg);
       const dyFiltered = Math.abs(dy) < dz ? 0 : dy;
@@ -214,7 +217,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
       const ori = getCurrentYawPitch();
       if (!ori) return null;
 
-      // Debugging: Log Yaw/Pitch, um zu prüfen, ob Funktion aufgerufen wird
+      // Debugging: Log Yaw/Pitch für absolute
       // console.log('Absolute Aim: Yaw', ori.yaw, 'Pitch', ori.pitch);
 
       const xz = Math.cos(ori.pitch);
