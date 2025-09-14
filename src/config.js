@@ -14,10 +14,11 @@ export const CONFIG = {
     maxPitch:  0.95,
     crosshairDistance: 200,
 
-    // NEU: Platzierung & Steuer-Optionen
-    offsetZFromPlayer: -0.9,   // Turret steht ~0.9 m vor dir (−Z = nach vorne)
-    requireGrabToAim: true,    // Ohne gedrückten Grip kein Aimen
-    invertYaw:  true,          // Links/Rechts umkehren (true = natürlich für diese Rig)
-    invertPitch:true           // Hoch/Runter umkehren (true = natürlich für diese Rig)
+    // Platzierung & Steuerung
+    offsetZFromPlayer: -0.3,      // ~30 cm vor dir
+    requireGrabToAim: true,       // ohne Grip kein Aimen
+    requireBothHandsToAim: true,  // erst mit beiden Händen
+    invertYaw:  false,            // Richtungen NATÜRLICH
+    invertPitch:false
   }
 };
