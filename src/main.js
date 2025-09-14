@@ -83,7 +83,7 @@ function init() {
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // Turret erzeugen
+  // Turret
   turret = new Turret();
   turret.addTo(scene);
 
@@ -96,9 +96,13 @@ function init() {
   renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; });
 
   // Desktop-Vorschau: initial vor der Kamera auf Bodenhöhe platzieren
-  placeTurretFromCamera(camera);
+  placeTurretFromCamera(getCurrentCamera());
 
   window.addEventListener('resize', onWindowResize);
+}
+
+function getCurrentCamera() {
+  return renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
 }
 
 function onWindowResize() {
@@ -117,8 +121,7 @@ function startLoop() {
 
     // Einmalige Platzierung nach Eintritt in VR, mit echter XR-Kamera
     if (needPlaceFromHMD) {
-      const xrCam = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
-      placeTurretFromCamera(xrCam);
+      placeTurretFromCamera(getCurrentCamera());
       needPlaceFromHMD = false;
     }
 
@@ -140,14 +143,13 @@ function startLoop() {
  * - y immer 0 (Bodenhöhe)
  * - in XZ um |offsetZFromPlayer| Meter vor dem Spieler
  * - Yaw an Blickrichtung ausrichten (kein Pitch/Roll)
- * - Safety: Falls Rohr Richtung Spieler schauen würde → Yaw + PI
+ * - Safety: Falls Rohr Richtung Spieler zeigen würde → Yaw + PI
  */
 function placeTurretFromCamera(cam) {
   const headPos = new THREE.Vector3();
   cam.getWorldPosition(headPos);
 
-  const headQuat = cam.getWorldQuaternion(new THREE.Quaternio
-
+  const headQuat = cam.getWorldQuaternion(new THREE.Quaternion());
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
 
   // Nur horizontale Komponente (XZ) nutzen
