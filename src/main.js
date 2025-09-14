@@ -1,3 +1,4 @@
+// /src/main.js
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { CONFIG } from './config.js';
@@ -6,12 +7,12 @@ import { Turret } from './turret.js';
 
 let scene, camera, renderer;
 let input, turret;
+let needPlaceFromHMD = false; // beim Sessionstart einmal korrekt platzieren
 
 init();
 startLoop();
 
 function init() {
-  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.xr.enabled = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -19,15 +20,13 @@ function init() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
-  // VR Button
   document.body.appendChild(
     VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] })
   );
 
-  // Szene & Kamera
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 2000);
-  camera.position.set(0, 1.6, 2);
+  camera.position.set(0, 1.6, 2); // Desktop-Start (in VR vom HMD überschrieben)
   scene.add(camera);
 
   // Himmel
@@ -63,17 +62,21 @@ function init() {
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // Turret 30 cm vor dir
+  // Turret-Objekt
   turret = new Turret();
-  turret.root.position.set(0, 0, CONFIG.turret.offsetZFromPlayer);
-  turret.addTo(scene);
+  scene.add(turret.root); // Positionierung erfolgt dynamisch (siehe placeTurretFromHMD)
 
-  // Input (mit Griffen)
+  // Input
   input = createInput(renderer, scene, camera, {
     handles: { left: turret.leftHandle, right: turret.rightHandle }
   });
 
+  // Beim Start einer VR-Session korrekt relativ zum HMD platzieren
+  renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; });
   window.addEventListener('resize', onWindowResize);
+
+  // Desktop-Vorschau: Turret 0.4 m vor der Kamera
+  placeTurretFromCamera(camera);
 }
 
 function onWindowResize() {
@@ -89,15 +92,38 @@ function startLoop() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
 
+    // Nach Sessionstart, wenn HMD-Pose valid ist, einmal korrekt platzieren
+    if (needPlaceFromHMD) {
+      placeTurretFromCamera(renderer.xr.getCamera?.(camera) || camera);
+      needPlaceFromHMD = false;
+    }
+
     input.update?.(dt);
 
-    // Aiming erst, wenn beide Griffe stabil gehalten werden
     const aimDir = input.getAimDirection();
-    if (aimDir) {
-      turret.setAimDirection(aimDir);
-    }
+    if (aimDir) turret.setAimDirection(aimDir);
 
     turret.update(dt, camera);
     renderer.render(scene, camera);
   });
+}
+
+/** Positioniert & richtet das Turret relativ zur aktuellen Kamerapose aus. */
+function placeTurretFromCamera(cam) {
+  const headPos = new THREE.Vector3();
+  cam.getWorldPosition(headPos);
+
+  const headQuat = cam.getWorldQuaternion(new THREE.Quaternion());
+  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(headQuat).normalize();
+
+  // 0.40 m vor dem Kopf in Blickrichtung
+  turret.root.position.copy(headPos).add(fwd.clone().multiplyScalar(Math.abs(CONFIG.turret.offsetZFromPlayer)));
+
+  // Nur Yaw ausrichten (kein Pitch/Roll)
+  const yaw = Math.atan2(fwd.x, -fwd.z);
+  turret.root.rotation.set(0, yaw, 0);
+
+  // Startwinkel neutral
+  turret.yawPivot.rotation.y = 0;
+  turret.pitchPivot.rotation.x = 0;
 }
