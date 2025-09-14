@@ -13,7 +13,7 @@ export const CONFIG = {
   // Input / Grip behavior
   input: {
     grabDist: 0.14,     // ≤ 14 cm zum Greifen
-    breakDist: 0.18,    // > 18 cm → Griff löst automatisch
+    breakDist: 1.0,     // Erhöht auf 1m, um Entgleiten zu vermeiden – praktisch "festgesnappt" (war 0.18)
     stableDelay: 0.05   // 50 ms bis Steuerung aktiv (schnelleres Arretieren)
   },
 
