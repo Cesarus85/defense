@@ -40,7 +40,7 @@ export const CONFIG = {
 
     // ✨ Option B: Delta-Mode + ergonomisch
     controlMode: 'delta',   // beibehalten
-    invertYaw:   false,
+    invertYaw:   true,
     invertPitch: true,      // Hände hoch → Rohr hoch
     sensitivityYaw:   1.0,
     sensitivityPitch: 1.0,
