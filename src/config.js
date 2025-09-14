@@ -11,15 +11,14 @@ export const CONFIG = {
   // Eingabe/Greifen
   input: {
     grabDist: 0.14,     // <= 14 cm zum Greifen
-    breakDist: 0.18,    // > 18 cm → Griff löst automatisch
-    stableDelay: 0.04   // Reduziert auf 40 ms für schnelleren Start (war 80 ms)
+    breakDist: 1.0,     // Erhöht auf 1m, um Entgleiten zu vermeiden – praktisch "festgesnappt" (war 0.18)
+    stableDelay: 0.04   // 40 ms für schnelleren Start
   },
 
   turret: {
     height: 1.20,
-    // Schnelleres Nachziehen der Zielwinkel
-    yawSpeed: 24.0,     // Verdoppelt auf 24 rad/s für responsiveres Folgen (war 12)
-    pitchSpeed: 24.0,   // Dito
+    yawSpeed: 24.0,     // 24 rad/s für responsives Folgen
+    pitchSpeed: 24.0,
     minPitch: -0.6,     // ca. -34°
     maxPitch:  1.1,     // ca. +63°
     crosshairDistance: 200,
@@ -27,13 +26,13 @@ export const CONFIG = {
     // Platzierung & Steuerung
     offsetZFromPlayer: -0.4,     // ~40 cm vor dir
     requireGrabToAim: true,
-    requireBothHandsToAim: true, // beide Griffe für Steuerung
-    invertYaw:  true,            // Invertiert Links/Rechts – das sollte die Spiegelung fixen (war false)
-    invertPitch: true,           // Optional: Invertiert Hoch/Runter, falls das auch verkehrt ist (teste beides)
+    requireBothHandsToAim: true, // beide Griffe für Steuerung (teste false für Einhand)
+    invertYaw:  true,            // Invertiert Links/Rechts
+    invertPitch: true,           // Invertiert Hoch/Runter (anpassen nach Bedarf)
 
-    // Delta-Grip Sensitivität (Skalierung der Winkeländerung)
-    sensitivityYaw:   1.8,       // Erhöht auf 1.8 für größere Deltas bei Handbewegungen (war 1.0)
-    sensitivityPitch: 1.8,       // Dito
-    deadzoneDeg: 0.2             // Reduziert auf 0.2° für weniger Ignorieren kleiner Bewegungen (war 0.4)
+    // Delta-Grip Sensitivität
+    sensitivityYaw:   1.8,       // 1.8 für größere Deltas
+    sensitivityPitch: 1.8,
+    deadzoneDeg: 0.2             // 0.2° für weniger Ignorieren
   }
 };
