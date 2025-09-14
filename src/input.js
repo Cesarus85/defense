@@ -3,8 +3,8 @@ import { CONFIG } from './config.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 export function createInput(renderer, scene, camera, opts = {}) {
-  const handles = opts.handles || null; // { left: Mesh, right: Mesh }
-  const GRAB_DIST = 0.12;               // ~12 cm Griff-Reichweite
+  const handles = opts.handles || null;     // { left: Mesh, right: Mesh }
+  const GRAB_DIST = 0.14;                   // ~14 cm Griff-Reichweite
 
   const state = {
     controllers: [
@@ -12,9 +12,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
       { index: 1, controller: renderer.xr.getController(1), grip: renderer.xr.getControllerGrip(1), handedness: null, grabbing: false },
     ],
     hasVR: false,
-    mouseYaw: 0,
-    mousePitch: 0,
-    mouseActive: false,
+    mouseYaw: 0, mousePitch: 0, mouseActive: false,
     canvas: renderer.domElement,
   };
 
@@ -30,16 +28,14 @@ export function createInput(renderer, scene, camera, opts = {}) {
     const model = factory.createControllerModel(entry.grip);
     entry.grip.add(model);
 
-    // Grab-Logik auf Squeeze (Seitenbutton)
+    // Greifen nur, wenn nah am jeweiligen Griff
     entry.controller.addEventListener('squeezestart', () => {
       if (!handles) { entry.grabbing = true; return; }
-      const near = whichHandleNear(entry.grip, handles, GRAB_DIST);
-      if (near) {
+      const which = whichHandleNear(entry.grip, handles, GRAB_DIST);
+      if (which) {
         entry.grabbing = true;
-        // Highlight passender Griff
-        near === 'left' ? handles.left.material.emissive.setHex(0x00aaff) : handles.right.material.emissive.setHex(0x00aaff);
-        const mat = near === 'left' ? handles.left.material : handles.right.material;
-        mat.emissiveIntensity = 0.6;
+        const mat = which === 'left' ? handles.left.material : handles.right.material;
+        mat.emissive.setHex(0x00aaff); mat.emissiveIntensity = 0.6;
       }
     });
     entry.controller.addEventListener('squeezeend', () => {
@@ -60,7 +56,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
   renderer.xr.addEventListener('sessionstart', () => { state.hasVR = true; });
   renderer.xr.addEventListener('sessionend',   () => { state.hasVR = false; state.controllers.forEach(c=>c.grabbing=false); });
 
-  // Desktop-Fallback: Maus steuert Turret
+  // Desktop-Fallback (Maus)
   state.canvas.style.touchAction = 'none';
   state.canvas.addEventListener('pointerdown', () => { state.mouseActive = true; state.canvas.requestPointerLock?.(); });
   window.addEventListener('pointerup',   () => { state.mouseActive = false; document.exitPointerLock?.(); });
@@ -72,13 +68,12 @@ export function createInput(renderer, scene, camera, opts = {}) {
     state.mousePitch = THREE.MathUtils.clamp(state.mousePitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
   });
 
-  // Nähe-Feedback (Highlight), wenn nicht gegriffen
-  const _tmpH = new THREE.Vector3();
+  // Nähe-Highlight wenn NICHT gegriffen
   function proximityHighlight() {
     if (!handles || !state.hasVR) return;
     let leftNear = false, rightNear = false;
     for (const c of state.controllers) {
-      if (!c.grip) continue;
+      if (!c.grip || c.grabbing) continue;
       const which = whichHandleNear(c.grip, handles, GRAB_DIST);
       if (which === 'left') leftNear = true;
       if (which === 'right') rightNear = true;
@@ -91,12 +86,11 @@ export function createInput(renderer, scene, camera, opts = {}) {
 
   function whichHandleNear(grip, handles, maxDist) {
     const gp = grip.getWorldPosition(new THREE.Vector3());
-    const lp = handles.left.getWorldPosition(_tmpH.set(0,0,0));
+    const lp = handles.left.getWorldPosition(new THREE.Vector3());
     const rp = handles.right.getWorldPosition(new THREE.Vector3());
-    const dl = gp.distanceTo(lp);
-    const dr = gp.distanceTo(rp);
+    const dl = gp.distanceTo(lp), dr = gp.distanceTo(rp);
     if (dl <= maxDist && dl <= dr) return 'left';
-    if (dr <= maxDist && dr < dl)  return 'right';
+    if (dr <= maxDist && dr <  dl) return 'right';
     return null;
   }
 
@@ -112,20 +106,23 @@ export function createInput(renderer, scene, camera, opts = {}) {
 
     /**
      * Liefert eine Vorwärts-Richtung fürs Zielen.
-     * - In VR & beim Greifen: Durchschnitt der Vorwärtsvektoren beider greifenden Controller.
-     * - In VR ohne Greifen: rechter Controller (Fallback Kopf).
+     * - VR + requireGrabToAim: Nur wenn mind. ein Controller GRIFFT.
+     * - Greifen mit beiden Händen: gemittelter Forward-Vektor (stabiler).
      * - Desktop: Maus.
+     * - Wenn VR & kein Griff aktiv: return null (Turret bleibt stehen).
      */
     getAimDirection() {
       if (state.hasVR) {
         const active = state.controllers.filter(c => c.grabbing);
+        if (CONFIG.turret.requireGrabToAim && active.length === 0) return null;
+
         if (active.length > 0) {
           _sum.set(0,0,0);
           for (const c of active) _sum.add(getForward(c.grip));
-          if (active.length === 1) return _sum.normalize();
           return _sum.multiplyScalar(1/active.length).normalize();
         }
-        // Kein Grab: rechter Controller oder Kopf
+
+        // Fallback wenn requireGrabToAim = false:
         const right = state.controllers.find(c => c.handedness === 'right') || state.controllers[0];
         if (right) return getForward(right.grip);
         return new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
