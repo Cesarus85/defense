@@ -132,20 +132,26 @@ export function createPlacementController({
       const scl = new THREE.Vector3();
       mat.decompose(pos, rot, scl);
 
-      // Sicherheits-Minimalabstand (verhindert „im Auge kleben“ / Monokular-Effekt)
+      // Sicherheits-Minimalabstand (verhindert „im Auge kleben" / Monokular-Effekt)
       const head = new THREE.Vector3(
         viewerPose.transform.position.x,
         viewerPose.transform.position.y,
         viewerPose.transform.position.z
       );
       const minDist = 0.4; // Meter
-      const v = new THREE.Vector3().subVectors(pos, head);
-      if (v.length() < minDist) {
+      
+      // Berechne horizontale Distanz (ohne Y-Komponente) für bessere Bodenerkennung
+      const headFlat = new THREE.Vector3(head.x, pos.y, head.z);
+      const horizontalDist = pos.distanceTo(headFlat);
+      
+      if (horizontalDist < minDist) {
         // schiebe das Reticle auf der Bodenebene in Blickrichtung etwas nach vorn
         const forward = getViewerForward(viewerPose);
         forward.y = 0; forward.normalize();
-        pos.copy(head).addScaledVector(forward, minDist);
-        pos.y = 0; // am Boden halten
+        
+        // Ausgehend von der Kopfposition auf Bodenhöhe
+        const startPos = new THREE.Vector3(head.x, pos.y, head.z);
+        pos.copy(startPos).addScaledVector(forward, minDist);
       }
 
       // Orientierung immer flach auf Boden + Yaw vom Stick
