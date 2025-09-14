@@ -62,14 +62,14 @@ export class Turret {
     sight.position.set(0, 0.15, -0.12);
     this.pitchPivot.add(sight);
 
-    // Griffe: leicht zum Spieler (+Z) und seitlich ±X
+    // Griffe (leicht zum Spieler versetzt)
     const handleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.16, 16);
     const handleMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
     this.leftHandle  = new THREE.Mesh(handleGeo, handleMat.clone());
     this.rightHandle = new THREE.Mesh(handleGeo, handleMat.clone());
     this.leftHandle.rotation.z = Math.PI * 0.5;
     this.rightHandle.rotation.z = Math.PI * 0.5;
-    const gripY = 0.02, gripZ = 0.26, gripX = 0.22; // etwas näher zum Spieler
+    const gripY = 0.02, gripZ = 0.26, gripX = 0.22;
     this.leftHandle.position.set(-gripX, gripY, gripZ);
     this.rightHandle.position.set(+gripX, gripY, gripZ);
     this.pitchPivot.add(this.leftHandle, this.rightHandle);
@@ -80,10 +80,6 @@ export class Turret {
     // Zielwinkel
     this._targetYaw = 0;
     this._targetPitch = 0;
-
-    // Hilfsvektoren
-    this._fwd = new THREE.Vector3(0, 0, -1);
-    this._tmp = new THREE.Vector3();
 
     // Ergonomie
     this.root.scale.setScalar(0.85);
@@ -114,22 +110,17 @@ export class Turret {
     return g;
   }
 
+  // ✅ Nur Winkel invertieren (nicht den Vektor), damit „vorne“ vorne bleibt.
   setAimDirection(worldDir) {
-    // Inversion nach Config
-    const dir = worldDir.clone();
-    if (CONFIG.turret.invertYaw || CONFIG.turret.invertPitch) {
-      if (CONFIG.turret.invertYaw)   dir.x = -dir.x;
-      if (CONFIG.turret.invertPitch) { dir.y = -dir.y; dir.z = -dir.z; }
-    }
-    const xzLen = Math.hypot(dir.x, dir.z);
-    let yaw   = Math.atan2(dir.x, -dir.z); // -Z ist unsere Vorwärtsrichtung
-    let pitch = Math.atan2(dir.y, xzLen);
+    const xzLen = Math.hypot(worldDir.x, worldDir.z);
+    let yaw   = Math.atan2(worldDir.x, -worldDir.z); // -Z = vorwärts
+    let pitch = Math.atan2(worldDir.y, xzLen);
 
-    // clamp
-    pitch = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
+    if (CONFIG.turret.invertYaw)   yaw   = -yaw;
+    if (CONFIG.turret.invertPitch) pitch = -pitch;
 
     this._targetYaw = yaw;
-    this._targetPitch = pitch;
+    this._targetPitch = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
   }
 
   update(dt, camera) {
@@ -139,10 +130,10 @@ export class Turret {
     this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, 1 - Math.exp(-pspd * dt));
 
     if (this.crosshairRenderEnabled) {
-      this._fwd.set(0, 0, -1).applyQuaternion(this.pitchPivot.getWorldQuaternion(new THREE.Quaternion()));
+      const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(this.pitchPivot.getWorldQuaternion(new THREE.Quaternion()));
       const muzzleWorld = this.pitchPivot.getWorldPosition(new THREE.Vector3());
-      this._tmp.copy(this._fwd).multiplyScalar(CONFIG.turret.crosshairDistance).add(muzzleWorld);
-      this.crosshair.position.copy(this._tmp);
+      const p = fwd.multiplyScalar(CONFIG.turret.crosshairDistance).add(muzzleWorld);
+      this.crosshair.position.copy(p);
       if (camera) this.crosshair.lookAt(camera.position);
     }
   }
