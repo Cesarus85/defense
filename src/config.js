@@ -35,4 +35,31 @@ export const CONFIG = {
     sensitivityPitch: 1.8,
     deadzoneDeg: 0.2             // 0.2° für weniger Ignorieren
   }
+
+    fire: {
+    rpm: 720,                 // Schussrate
+    damage: 12,               // Platzhalter für später
+    spreadDeg: 0.6,           // Streuung pro Schuss
+    heatPerShot: 2.8,         // Heat-Zuwachs
+    heatCoolRate: 16,         // Heat-Abkühlung / s
+    overheatThreshold: 100,   // Schwelle
+    cooldownDelay: 0.20,      // Schießen pausiert Cooldown für X s
+    muzzleFlashMs: 40,        // Flash Dauer
+    recoilPitch: 0.008,       // Rückstoß (nach oben)
+    muzzleOffset: 1.1,        // Abstand Mündung vom Pivot (in m, lokal -Z)
+    range: 1500               // Hitscan-Reichweite
+  },
+  haptics: {
+    shotAmp: 0.6, shotMs: 22,
+    overheatAmp: 0.9, overheatMs: 70
+  },
+  ui: {
+    heatBar: {
+      offset: [0.35, 0.18, 0.32],   // relative Position an yawPivot
+      size: [0.28, 0.035],          // Breite/Höhe
+      background: 0x10161f,
+      fill: 0x93b5ff
+    }
+  },
+
 };
