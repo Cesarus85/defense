@@ -1,14 +1,21 @@
+// /src/fx.js
+// FX: Mündungsfeuer, Einschlagsfunken, Tracer-Pool
+
 import * as THREE from 'three';
+import { CONFIG } from './config.js';
 
 export class MuzzleFlash {
   constructor(turret, offset = 1.1) {
     this.turret = turret;
     this.life = 0;
     const tex = makeCircleTexture();
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
     this.sprite = new THREE.Sprite(mat);
     this.sprite.scale.set(0.22, 0.22, 0.22);
-    this.sprite.userData.ignoreHit = true; // ❗ FX nicht hittbar
+    this.sprite.userData.ignoreHit = true; // nicht hittbar
     this.offset = offset;
     turret.pitchPivot.add(this.sprite);
     this.sprite.position.set(0, 0, -this.offset);
@@ -52,12 +59,64 @@ export class HitSparks {
   }
 }
 
+export class TracerPool {
+  constructor(scene) {
+    this.scene = scene;
+    this.pool = [];
+    this.active = [];
+  }
+  spawn(start, end) {
+    const len = start.distanceTo(end);
+    if (len <= 0.001) return;
+    const dir = end.clone().sub(start).normalize();
+
+    const m = this.pool.pop() || this._makeTracerMesh();
+    m.scale.set(1, len, 1); // Geometrie entlang Y
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    m.position.copy(start).addScaledVector(dir, len * 0.5);
+    m.material.opacity = (CONFIG.tracer.opacity ?? 0.9);
+    m.userData.life = (CONFIG.tracer.lifeMs ?? 80) / 1000;
+    this.scene.add(m);
+    this.active.push(m);
+  }
+  update(dt) {
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const m = this.active[i];
+      m.userData.life -= dt;
+      m.material.opacity = Math.max(0, m.userData.life * 6);
+      if (m.userData.life <= 0) {
+        this.scene.remove(m);
+        this.active.splice(i,1);
+        this.pool.push(m);
+      }
+    }
+  }
+  _makeTracerMesh() {
+    const r = CONFIG.tracer.radius ?? 0.012;
+    const geo = new THREE.CylinderGeometry(r, r, 1, 8, 1, true);
+    const mat = new THREE.MeshBasicMaterial({
+      color: CONFIG.tracer.color ?? 0x9bd1ff,
+      transparent: true,
+      opacity: CONFIG.tracer.opacity ?? 0.9,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.userData.ignoreHit = true; // nicht raycastbar
+    return m;
+  }
+}
+
+// helpers
 function makeSpark() {
   const tex = makeCircleTexture(128, 0xffddaa);
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const mat = new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending
+  });
   const spr = new THREE.Sprite(mat);
   spr.scale.set(0.15, 0.15, 0.15);
-  spr.userData.ignoreHit = true; // ❗ Spark nicht hittbar
+  spr.userData.ignoreHit = true; // nicht hittbar
   return spr;
 }
 
