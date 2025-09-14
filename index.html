@@ -2,10 +2,19 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Bastion — Step 0+1</title>
+
+  <!-- Import Map: löst bare specifiers "three" & "three/addons/" -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/"
+    }
+  }
+  </script>
+
   <style>
     html, body { margin: 0; padding: 0; height: 100%; background: #0b0f14; color: #e6eef8; }
     #overlay {
