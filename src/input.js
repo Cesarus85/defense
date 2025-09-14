@@ -1,9 +1,13 @@
+// /src/input.js
+// Option B: Delta-Referenz wird exakt an den Griffen gesetzt (ohne Offsets),
+// Forward-Vektor aus dem GRIP-Transform, robustes Auto-Release über breakDist.
+
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 export function createInput(renderer, scene, camera, opts = {}) {
-  const handles = opts.handles || null; // { left: Mesh, right: Mesh }
+  const handles = opts.handles || null;
 
   const state = {
     controllers: [
@@ -11,10 +15,12 @@ export function createInput(renderer, scene, camera, opts = {}) {
       { index: 1, controller: renderer.xr.getController(1), grip: renderer.xr.getControllerGrip(1), handedness: null, grabbing: false, grabbedHandle: null },
     ],
     hasVR: false,
-    // Stabilität
+
+    // "Stable" Gate
     bothGrabTimer: 0,
     bothGrabStable: false,
-    // Delta-Grip: Referenz (erst gesetzt wenn stable)
+
+    // Delta-Referenz
     refYaw: 0,
     refPitch: 0,
     haveRef: false,
@@ -25,21 +31,23 @@ export function createInput(renderer, scene, camera, opts = {}) {
   };
 
   const factory = new XRControllerModelFactory();
+
   state.controllers.forEach(entry => {
     entry.controller.addEventListener('connected', e => {
       entry.handedness = e.data.handedness || null;
       entry.grip.userData.handedness = entry.handedness;
     });
     entry.controller.addEventListener('disconnected', () => {
-      entry.handedness = null; entry.grabbing = false; entry.grabbedHandle = null;
-      state.bothGrabTimer = 0; state.bothGrabStable = false; state.haveRef = false;
+      entry.handedness = null; release(entry);
     });
 
+    // Squeeze = greifen (nur wenn nah am vorgesehenen Griff)
     entry.controller.addEventListener('squeezestart', () => {
       if (!handles) { entry.grabbing = true; entry.grabbedHandle = null; return; }
       const which = whichHandleNear(entry.grip, handles, CONFIG.input.grabDist);
       if (which) {
-        entry.grabbing = true; entry.grabbedHandle = which;
+        entry.grabbing = true;
+        entry.grabbedHandle = which;
         const mat = which === 'left' ? handles.left.material : handles.right.material;
         mat.emissive.setHex(0x00aaff); mat.emissiveIntensity = 0.6;
       }
@@ -57,7 +65,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
     entry.grabbedHandle = null;
     state.bothGrabTimer = 0;
     state.bothGrabStable = false;
-    state.haveRef = false;
+    state.haveRef = false; // Delta-Ref verwerfen
     if (handles) {
       handles.left.material.emissive.setHex(0x000000);
       handles.left.material.emissiveIntensity = 0.0;
@@ -72,7 +80,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
     state.controllers.forEach(release);
   });
 
-  // Desktop-Fallback (Maus)
+  // Desktop-Fallback
   state.canvas.style.touchAction = 'none';
   state.canvas.addEventListener('pointerdown', () => { state.mouseActive = true; state.canvas.requestPointerLock?.(); });
   window.addEventListener('pointerup',   () => { state.mouseActive = false; document.exitPointerLock?.(); });
@@ -101,37 +109,31 @@ export function createInput(renderer, scene, camera, opts = {}) {
       const hp = c.grabbedHandle === 'left' ? handles.left : handles.right;
       const hpw = hp.getWorldPosition(new THREE.Vector3());
       const gp  = c.grip.getWorldPosition(new THREE.Vector3());
-      // Debugging: Ausgabe der Distanz, um Entgleiten zu analysieren
-      // console.log('Distanz:', gp.distanceTo(hpw));
       if (gp.distanceTo(hpw) > CONFIG.input.breakDist) {
         release(c);
       }
     }
   }
 
-  // Aktuelle Yaw/Pitch aus den (gegriffenen) Controllern – basierend auf Forward-Vektor
+  // Aktuelle Yaw/Pitch aus den (gegriffenen) Controllern – Vorwärts aus GRIP-Quaternion
   function getCurrentYawPitch() {
     const active = state.controllers.filter(c => c.grabbing);
     if (active.length === 0) return null;
 
-    // Mittelwert der Forward-Vektoren (Ein- oder Beidhändig)
     const fwd = new THREE.Vector3();
     for (const c of active) {
-      const v = new THREE.Vector3(0,0,-1).applyQuaternion(c.grip.getWorldQuaternion(new THREE.Quaternion()));
+      const v = new THREE.Vector3(0,0,-1)
+        .applyQuaternion(c.grip.getWorldQuaternion(new THREE.Quaternion())); // GRIP, nicht controller
       fwd.add(v);
     }
     fwd.normalize();
     const xz = Math.hypot(fwd.x, fwd.z);
-    let yaw   = Math.atan2(fwd.x, -fwd.z); // -Z = vor
-    let pitch = Math.atan2(fwd.y, xz);
-
-    // Pitch-Offset anwenden (für 'absolute'-Modus)
-    pitch += CONFIG.turret.pitchOffset;
-
+    const yaw   = Math.atan2(fwd.x, -fwd.z); // -Z nach vorn
+    const pitch = Math.atan2(fwd.y, xz);
     return { yaw, pitch };
   }
 
-  // Nähe-Highlight wenn NICHT gegriffen
+  // Nähe-Highlight
   function proximityHighlight() {
     if (!handles || !state.hasVR) return;
     let leftNear = false, rightNear = false;
@@ -147,13 +149,21 @@ export function createInput(renderer, scene, camera, opts = {}) {
     handles.right.material.emissiveIntensity = rightNear ? 0.4 : 0.0;
   }
 
+  // Utils
+  function shortestAngle(a) {
+    let ang = ((a + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (ang < -Math.PI) ang += Math.PI * 2;
+    return ang;
+  }
+
+  const _dir = new THREE.Vector3();
+
   return {
     update(dt=0) {
       proximityHighlight();
-      // enforceGrabDistance(); // Auskommentieren für komplettes "Snappen" ohne Distanzprüfung
-      enforceGrabDistance(); // Aktiv mit breakDist: 1.0 – teste zuerst so
+      enforceGrabDistance();
 
-      // Stable-Gate: erst wenn beide Griffe halten und Delay verstrichen
+      // Stable-Gate (beide Griffe)
       if (CONFIG.turret.requireBothHandsToAim) {
         const both = state.controllers[0].grabbing && state.controllers[1].grabbing;
         if (both) {
@@ -167,40 +177,33 @@ export function createInput(renderer, scene, camera, opts = {}) {
           state.haveRef = false;
         }
       } else {
-        // Einhand ok → “Stable” sobald irgendein Griff aktiv
         state.bothGrabStable = state.controllers.some(c => c.grabbing);
         if (!state.bothGrabStable) state.haveRef = false;
       }
 
-      // Referenz setzen, sobald stable und noch keine Ref vorhanden
-      if (state.bothGrabStable && !state.haveRef) {
+      // ✨ Delta-Referenz setzen, sobald stable – exakt an der aktuellen Griff-Pose
+      if (CONFIG.turret.controlMode === 'delta' && state.bothGrabStable && !state.haveRef) {
         const ori = getCurrentYawPitch();
         if (ori) {
           state.refYaw = ori.yaw;
-          state.refPitch = ori.pitch;
+          state.refPitch = ori.pitch; // keine Offsets!
           state.haveRef = true;
         }
       }
     },
 
-    /**
-     * Liefert bei “stable” die aktuellen Yaw/Pitch relativ zur gesetzten Referenz
-     * (Delta-Grip). Rückgabe: { ok:boolean, dy:number, dp:number }
-     */
+    // Delta-Ausgabe relativ zur zuletzt eingefrorenen Referenz
     getDeltaYawPitch() {
       if (!state.hasVR) return { ok: false, dy: 0, dp: 0 };
       if (!CONFIG.turret.requireGrabToAim) return { ok: false, dy: 0, dp: 0 };
+      if (CONFIG.turret.controlMode !== 'delta') return { ok: false, dy: 0, dp: 0 };
       if (!state.bothGrabStable || !state.haveRef) return { ok: false, dy: 0, dp: 0 };
 
       const ori = getCurrentYawPitch();
       if (!ori) return { ok: false, dy: 0, dp: 0 };
 
-      // Kleinsten Winkeldelta nehmen
       const dy = shortestAngle(ori.yaw - state.refYaw);
       const dp = shortestAngle(ori.pitch - state.refPitch);
-
-      // Debugging: Log Delta-Pitch, um Initial-Down zu analysieren
-      // console.log('Delta Pitch:', dp);
 
       // Deadzone
       const dz = THREE.MathUtils.degToRad(CONFIG.turret.deadzoneDeg);
@@ -210,31 +213,30 @@ export function createInput(renderer, scene, camera, opts = {}) {
       return { ok: true, dy: dyFiltered, dp: dpFiltered };
     },
 
-    // Neue Funktion für 'absolute' Modus: Liefert die absolute Aim-Richtung als Vector3
+    // Absolute Richtung (Fallback / Desktop)
     getAimDirection() {
-      if (!state.hasVR || !CONFIG.turret.requireGrabToAim || !state.bothGrabStable) return null;
-
-      const ori = getCurrentYawPitch();
-      if (!ori) return null;
-
-      // Debugging: Log Yaw/Pitch für absolute
-      // console.log('Absolute Aim: Yaw', ori.yaw, 'Pitch', ori.pitch);
-
-      const xz = Math.cos(ori.pitch);
-      return new THREE.Vector3(Math.sin(ori.yaw) * xz, Math.sin(ori.pitch), -Math.cos(ori.yaw) * xz).normalize();
+      if (state.hasVR) {
+        if (CONFIG.turret.requireGrabToAim && !state.bothGrabStable) return null;
+        // Mittelwert der gegriffenen Hände nutzen
+        const active = state.controllers.filter(c=>c.grabbing);
+        if (active.length === 0) return null;
+        const fwd = new THREE.Vector3();
+        for (const c of active) {
+          const v = new THREE.Vector3(0,0,-1).applyQuaternion(c.grip.getWorldQuaternion(new THREE.Quaternion()));
+          fwd.add(v);
+        }
+        return fwd.normalize();
+      } else {
+        const xz = Math.cos(state.mousePitch);
+        _dir.set(Math.sin(state.mouseYaw) * xz, Math.sin(state.mousePitch), -Math.cos(state.mouseYaw) * xz);
+        return _dir.normalize();
+      }
     },
 
-    // Desktop-Test (nicht VR): liefert Richtung aus Maus
+    // Desktop-Test
     getDesktopDir() {
       const xz = Math.cos(state.mousePitch);
       return new THREE.Vector3(Math.sin(state.mouseYaw) * xz, Math.sin(state.mousePitch), -Math.cos(state.mouseYaw) * xz).normalize();
     }
   };
-}
-
-// Hilfsfunktionen
-function shortestAngle(a) {
-  let ang = ((a + Math.PI) % (Math.PI * 2)) - Math.PI;
-  if (ang < -Math.PI) ang += Math.PI * 2;
-  return ang;
 }
