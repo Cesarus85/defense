@@ -1,11 +1,11 @@
-// /src/main.js
+// main.js with direct "absolute" aiming restored, correct inversions, and Step 2 integrated
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { CONFIG } from './config.js';
 import { createInput } from './input.js';
 import { Turret } from './turret.js';
 
-// STEP 2 modules
+// Step 2 modules
 import { AudioManager } from './audio.js';
 import { MuzzleFlash, HitSparks } from './fx.js';
 import { HeatBar3D } from './ui.js';
@@ -15,18 +15,11 @@ let scene, camera, renderer;
 let input, turret;
 let needPlaceFromHMD = false;
 
-// Delta-grip baseline
+// Delta-grip baseline (nur genutzt, wenn controlMode='delta')
 let baseTurretYaw = 0, baseTurretPitch = 0;
 let hadRef = false;
 
-// 🔐 Container verhindert TDZ-Probleme (alles zentral referenziert)
-const STEP2 = {
-  audio: null,
-  muzzleFx: null,
-  hitFx: null,
-  heatUI: null,
-  gun: null,
-};
+const STEP2 = { audio: null, muzzleFx: null, hitFx: null, heatUI: null, gun: null };
 
 init();
 startLoop();
@@ -45,13 +38,13 @@ function init() {
     VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] })
   );
 
-  // Szene & Kamera
+  // Scene & Camera
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 2000);
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Himmel (Gradient)
+  // Sky (gradient)
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
@@ -62,24 +55,16 @@ function init() {
     },
     vertexShader: `
       varying vec3 vPos;
-      void main(){
-        vPos = position;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-      }
+      void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
     `,
     fragmentShader: `
-      uniform vec3 topColor;
-      uniform vec3 bottomColor;
-      varying vec3 vPos;
-      void main(){
-        float h = normalize(vPos).y * 0.5 + 0.5;
-        gl_FragColor = vec4(mix(bottomColor, topColor, h), 1.0);
-      }
+      uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
+      void main(){ float h = normalize(vPos).y * 0.5 + 0.5; gl_FragColor = vec4(mix(bottomColor, topColor, h), 1.0); }
     `
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-  // Licht
+  // Lights
   scene.add(new THREE.HemisphereLight(
     CONFIG.lights.hemi.sky,
     CONFIG.lights.hemi.ground,
@@ -89,7 +74,7 @@ function init() {
   dir.position.set(...CONFIG.lights.dir.position);
   scene.add(dir);
 
-  // Boden + Grid
+  // Ground + Grid
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize),
     new THREE.MeshStandardMaterial({ color: 0x202a36, roughness: 1, metalness: 0 })
@@ -106,39 +91,34 @@ function init() {
   turret = new Turret();
   turret.addTo(scene);
 
-  // Input (mit Griffen)
+  // Input
   input = createInput(renderer, scene, camera, {
     handles: { left: turret.leftHandle, right: turret.rightHandle }
   });
 
-  // Nach VR-Sessionstart korrekt platzieren
+  // Place turret when VR session starts
   renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; resetRef(); });
 
-  // Desktop-Vorschau: auf Boden vor Kamera
+  // Desktop preview placement (on ground in front of camera)
   placeTurretFromCamera(getCurrentCamera());
 
-  // **JETZT** Step 2 Systeme initialisieren (nachdem scene/turret existieren)
+  // Step 2 systems
   initStep2Systems();
-
-  // Audio-Context früh aktivieren (User-Geste)
   window.addEventListener('pointerdown', () => STEP2.audio?.ensure(), { once: true });
 
   window.addEventListener('resize', onWindowResize);
 }
 
 function initStep2Systems() {
-  STEP2.audio = new AudioManager();
+  STEP2.audio   = new AudioManager();
   STEP2.muzzleFx = new MuzzleFlash(turret, CONFIG.fire.muzzleOffset);
-  STEP2.hitFx = new HitSparks(scene);
-  STEP2.heatUI = new HeatBar3D(scene, turret);
-  STEP2.gun = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI);
+  STEP2.hitFx    = new HitSparks(scene);
+  STEP2.heatUI   = new HeatBar3D(scene, turret);
+  STEP2.gun      = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI);
 }
 
 function resetRef() { hadRef = false; }
-
-function getCurrentCamera() {
-  return renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
-}
+function getCurrentCamera() { return renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera; }
 
 function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -154,7 +134,6 @@ function startLoop() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
 
-    // Nach Eintritt in VR: einmalig mit XR-Kamera platzieren
     if (needPlaceFromHMD) {
       placeTurretFromCamera(getCurrentCamera());
       needPlaceFromHMD = false;
@@ -166,12 +145,11 @@ function startLoop() {
     // === Aiming ===
     let aimed = false;
 
-    // Bevorzugt: Delta-Grip
-    if (typeof input.getDeltaYawPitch === 'function') {
+    if (CONFIG.turret.controlMode === 'delta' && typeof input.getDeltaYawPitch === 'function') {
       const delta = input.getDeltaYawPitch();
       if (delta && delta.ok) {
         if (!hadRef) {
-          baseTurretYaw = turret.yawPivot.rotation.y;
+          baseTurretYaw   = turret.yawPivot.rotation.y;
           baseTurretPitch = turret.pitchPivot.rotation.x;
           hadRef = true;
         }
@@ -180,7 +158,7 @@ function startLoop() {
         if (CONFIG.turret.invertYaw)   dy = -dy;
         if (CONFIG.turret.invertPitch) dp = -dp;
 
-        const targetYaw   = shortestAngle(baseTurretYaw + dy);
+        const targetYaw   = baseTurretYaw + dy;
         const targetPitch = baseTurretPitch + dp;
         turret.setTargetAngles(targetYaw, targetPitch);
         aimed = true;
@@ -189,15 +167,25 @@ function startLoop() {
       }
     }
 
-    // Fallback: Richtungsvektor
-    if (!aimed && typeof input.getAimDirection === 'function') {
-      const dir = input.getAimDirection();
-      if (dir) { turret.setAimDirection(dir); aimed = true; }
+    if (!aimed) {
+      // Absolute Richtung (wie früher, direkt & knackig)
+      const dir = input.getAimDirection?.();
+      if (dir) {
+        let { yaw, pitch } = dirToAngles(dir);
+        if (CONFIG.turret.invertYaw)   yaw   = -yaw;
+        if (CONFIG.turret.invertPitch) pitch = -pitch;
+        turret.setTargetAngles(yaw, pitch);
+        aimed = true;
+      }
     }
 
-    // Desktop-Fallback
+    // Desktop fallback
     if (!aimed && !renderer.xr.isPresenting && typeof input.getDesktopDir === 'function') {
-      turret.setAimDirection(input.getDesktopDir());
+      const dir = input.getDesktopDir();
+      let { yaw, pitch } = dirToAngles(dir);
+      if (CONFIG.turret.invertYaw)   yaw   = -yaw;
+      if (CONFIG.turret.invertPitch) pitch = -pitch;
+      turret.setTargetAngles(yaw, pitch);
     }
 
     // === Updates ===
@@ -211,19 +199,23 @@ function startLoop() {
   });
 }
 
+// Welt-Richtung -> Winkel (Yaw um Y, Pitch um X)
+function dirToAngles(worldDir) {
+  const xzLen = Math.hypot(worldDir.x, worldDir.z);
+  const yaw   = Math.atan2(worldDir.x, -worldDir.z); // -Z = vorwärts
+  const pitch = Math.atan2(worldDir.y, xzLen);
+  return { yaw, pitch };
+}
+
 /**
- * Positioniert das Turret relativ zur aktuellen Kamerapose:
- * - y = 0 (Boden)
- * - XZ: |offsetZFromPlayer| vor dem Spieler
- * - Yaw an Blickrichtung (kein Pitch/Roll)
- * - Safety: 180° Flip falls Rohr Richtung Spieler zeigen würde
+ * Position turret relative to current camera pose (on ground, in front of player)
  */
 function placeTurretFromCamera(cam) {
   const headPos = new THREE.Vector3(); cam.getWorldPosition(headPos);
   const headQuat = cam.getWorldQuaternion(new THREE.Quaternion());
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
 
-  // Nur horizontale Komponente
+  // Only horizontal component
   const fwdXZ = new THREE.Vector3(fwd.x, 0, fwd.z);
   if (fwdXZ.lengthSq() < 1e-6) fwdXZ.set(0, 0, -1);
   fwdXZ.normalize();
@@ -232,28 +224,21 @@ function placeTurretFromCamera(cam) {
   const basePos = new THREE.Vector3(headPos.x, 0, headPos.z).add(fwdXZ.clone().multiplyScalar(dist));
   turret.root.position.copy(basePos);
 
-  // Yaw ausrichten
+  // Align yaw so that turret -Z matches fwdXZ
   let yaw = Math.atan2(fwdXZ.x, -fwdXZ.z);
   turret.root.rotation.set(0, yaw, 0);
 
-  // Safety-Check
-  const forwardAfterYaw = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, yaw, 0, 'XYZ'));
-  if (forwardAfterYaw.dot(fwdXZ) < 0) {
+  // Safety 180° flip if needed
+  const fwdAfter = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, yaw, 0, 'XYZ'));
+  if (fwdAfter.dot(fwdXZ) < 0) {
     yaw += Math.PI;
     turret.root.rotation.set(0, yaw, 0);
   }
 
-  // Pivots neutral + Delta-Baseline zurücksetzen
+  // Reset pivots
   turret.yawPivot.rotation.y = 0;
   turret.pitchPivot.rotation.x = 0;
-  baseTurretYaw = turret.yawPivot.rotation.y;
-  baseTurretPitch = turret.pitchPivot.rotation.x;
+  baseTurretYaw = 0;
+  baseTurretPitch = 0;
   hadRef = false;
-}
-
-// Kleinster Winkeldelta auf [-π, π]
-function shortestAngle(a) {
-  let ang = ((a + Math.PI) % (Math.PI * 2)) - Math.PI;
-  if (ang < -Math.PI) ang += Math.PI * 2;
-  return ang;
 }
