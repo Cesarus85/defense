@@ -85,6 +85,7 @@ function init() {
 
 function resetRef() {
   hadRef = false;
+  baseYaw = 0; basePitch = 0;  // Explizit resetten
 }
 
 function getCurrentCamera() {
