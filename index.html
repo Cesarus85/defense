@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <!-- Erlaubt später WebXR-Zugriff im Browser -->
+  <meta http-equiv="Permissions-Policy" content="xr-spatial-tracking=(self)" />
+  <title>AR Turret Defense — Step 0</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Import Map: stabile three.js-Version + Addons für spätere Schritte -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app" class="app"></div>
+
+  <!-- Einfache Overlay-UI (nur Status in Step 0) -->
+  <div id="overlay" class="overlay noselect">
+    <div class="overlay-row">
+      <strong>AR Turret Defense</strong>
+      <span id="status">Booting…</span>
+    </div>
+  </div>
+
+  <!-- Einstiegspunkt -->
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
