@@ -4,13 +4,14 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 
 export function createInput(renderer, scene, camera, opts = {}) {
   const handles = opts.handles || null;     // { left: Mesh, right: Mesh }
-  const GRAB_DIST = 0.14;                   // ~14 cm Griff-Reichweite
+  const GRAB_DIST = 0.14;                   // ~14 cm zum Greifen
+  const BREAK_DIST = 0.16;                  // >16 cm ⇒ Griff wird gelöst
   const STABLE_DELAY = 0.15;                // 150 ms: erst dann Aiming freigeben
 
   const state = {
     controllers: [
-      { index: 0, controller: renderer.xr.getController(0), grip: renderer.xr.getControllerGrip(0), handedness: null, grabbing: false },
-      { index: 1, controller: renderer.xr.getController(1), grip: renderer.xr.getControllerGrip(1), handedness: null, grabbing: false },
+      { index: 0, controller: renderer.xr.getController(0), grip: renderer.xr.getControllerGrip(0), handedness: null, grabbing: false, grabbedHandle: null },
+      { index: 1, controller: renderer.xr.getController(1), grip: renderer.xr.getControllerGrip(1), handedness: null, grabbing: false, grabbedHandle: null },
     ],
     hasVR: false,
     bothGrabTimer: 0,
@@ -29,7 +30,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
       entry.grip.userData.handedness = entry.handedness;
     });
     entry.controller.addEventListener('disconnected', () => {
-      entry.handedness = null; entry.grabbing = false;
+      entry.handedness = null; entry.grabbing = false; entry.grabbedHandle = null;
     });
 
     const model = factory.createControllerModel(entry.grip);
@@ -37,36 +38,40 @@ export function createInput(renderer, scene, camera, opts = {}) {
 
     // Greifen nur, wenn nah am jeweiligen Griff
     entry.controller.addEventListener('squeezestart', () => {
-      if (!handles) { entry.grabbing = true; return; }
+      if (!handles) { entry.grabbing = true; entry.grabbedHandle = null; return; }
       const which = whichHandleNear(entry.grip, handles, GRAB_DIST);
       if (which) {
         entry.grabbing = true;
+        entry.grabbedHandle = which; // 'left' | 'right'
         const mat = which === 'left' ? handles.left.material : handles.right.material;
         mat.emissive.setHex(0x00aaff); mat.emissiveIntensity = 0.6;
       }
     });
-    entry.controller.addEventListener('squeezeend', () => {
-      entry.grabbing = false;
-      state.bothGrabTimer = 0;
-      state.bothGrabStable = false;
-      if (handles) {
-        handles.left.material.emissive.setHex(0x000000);
-        handles.left.material.emissiveIntensity = 0.0;
-        handles.right.material.emissive.setHex(0x000000);
-        handles.right.material.emissiveIntensity = 0.0;
-      }
-    });
+
+    entry.controller.addEventListener('squeezeend', () => release(entry));
 
     scene.add(entry.controller);
     scene.add(entry.grip);
   });
 
+  function release(entry){
+    entry.grabbing = false;
+    entry.grabbedHandle = null;
+    state.bothGrabTimer = 0;
+    state.bothGrabStable = false;
+    if (handles) {
+      handles.left.material.emissive.setHex(0x000000);
+      handles.left.material.emissiveIntensity = 0.0;
+      handles.right.material.emissive.setHex(0x000000);
+      handles.right.material.emissiveIntensity = 0.0;
+    }
+  }
+
   // Session-Events
   renderer.xr.addEventListener('sessionstart', () => { state.hasVR = true; });
   renderer.xr.addEventListener('sessionend',   () => {
     state.hasVR = false;
-    state.controllers.forEach(c=>c.grabbing=false);
-    state.bothGrabTimer = 0; state.bothGrabStable = false;
+    state.controllers.forEach(release);
   });
 
   // Desktop-Fallback (Maus)
@@ -97,6 +102,21 @@ export function createInput(renderer, scene, camera, opts = {}) {
     handles.right.material.emissiveIntensity = rightNear ? 0.4 : 0.0;
   }
 
+  // Während des Greifens prüfen, ob du dich vom Griff entfernst → ggf. Auto-Release
+  function enforceGrabDistance() {
+    if (!handles || !state.hasVR) return;
+    for (const c of state.controllers) {
+      if (!c.grabbing || !c.grabbedHandle) continue;
+      const hp = c.grabbedHandle === 'left'
+        ? handles.left.getWorldPosition(new THREE.Vector3())
+        : handles.right.getWorldPosition(new THREE.Vector3());
+      const gp = c.grip.getWorldPosition(new THREE.Vector3());
+      if (gp.distanceTo(hp) > BREAK_DIST) {
+        release(c);
+      }
+    }
+  }
+
   function whichHandleNear(grip, handles, maxDist) {
     const gp = grip.getWorldPosition(new THREE.Vector3());
     const lp = handles.left.getWorldPosition(new THREE.Vector3());
@@ -117,6 +137,7 @@ export function createInput(renderer, scene, camera, opts = {}) {
   return {
     update(dt=0) {
       proximityHighlight();
+      enforceGrabDistance();
 
       // Stable-Gate: erst wenn beide Griffe halten und 150ms verstrichen
       if (CONFIG.turret.requireBothHandsToAim) {
@@ -139,7 +160,6 @@ export function createInput(renderer, scene, camera, opts = {}) {
         if (CONFIG.turret.requireGrabToAim) {
           if (CONFIG.turret.requireBothHandsToAim) {
             if (!state.bothGrabStable) return null;
-            // beide aktiv
             _sum.set(0,0,0);
             for (const c of state.controllers) _sum.add(getForward(c.grip));
             return _sum.multiplyScalar(0.5).normalize();
@@ -151,7 +171,6 @@ export function createInput(renderer, scene, camera, opts = {}) {
             return _sum.multiplyScalar(1/active.length).normalize();
           }
         }
-        // Fallback (wenn requireGrabToAim=false)
         const right = state.controllers.find(c => c.handedness === 'right') || state.controllers[0];
         if (right) return getForward(right.grip);
         return new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
