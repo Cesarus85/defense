@@ -92,6 +92,32 @@ export const CONFIG = {
     }
   },
 
+    grips: {
+    // Umschalten: 'front-horizontal' (bisher) oder 'side-vertical' (neu)
+    mode: 'side-vertical',
+
+    front: {
+      spread: 0.22,     // Abstand L/R von der Mitte (m)
+      forward: 0.26,    // nach vorn (+Z lokal)
+      height: 0.02,     // leicht über Pivot
+      length: 0.16,     // Griff-Länge
+      radius: 0.03,     // Griff-Radius
+      rollDeg: 90       // 90° = horizontaler Stab
+    },
+
+    side: {
+      spread: 0.28,     // weiter außen am Housing
+      forward: 0.10,    // etwas nach vorn
+      height: 0.02,     // nah am Pivot
+      length: 0.16,
+      radius: 0.03,
+      tiltInDeg: 12     // leicht zur Mitte geneigt (ergonomisch)
+    },
+
+    color: 0x8899aa
+  },
+
+
   // ✨ Tracer-Optik für Schüsse
   tracer: {
     enabled: true,
