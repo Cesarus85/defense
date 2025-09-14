@@ -1,4 +1,7 @@
 // /src/turret.js
+// Turret-Geometrie mit umschaltbaren Griffen + deutlich sichtbarem Fadenkreuz.
+// Steuerungs-API bleibt: setAimDirection(dir), setTargetAngles(yaw,pitch), update(dt,camera)
+
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 
@@ -30,7 +33,7 @@ export class Turret {
     this.root.add(this.yawPivot);
     this.yawPivot.add(this.pitchPivot);
 
-    // Housing (Kanonen-Kopf)
+    // Housing
     const housing = new THREE.Mesh(
       new THREE.BoxGeometry(0.42, 0.26, 0.42),
       new THREE.MeshStandardMaterial({ color: 0x56697d, metalness: 0.25, roughness: 0.6 })
@@ -63,7 +66,7 @@ export class Turret {
     sight.position.set(0, 0.15, -0.12);
     this.pitchPivot.add(sight);
 
-    // === Griffe (umschaltbar) ===
+    // Griffe (umschaltbar über CONFIG.grips.mode)
     this.#buildHandles(housing);
 
     // Crosshair
@@ -83,38 +86,48 @@ export class Turret {
   }
 
   #makeCrosshair() {
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.25, 0.3, 32),
-      new THREE.MeshBasicMaterial({ color: 0x9bd1ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
-    );
-    const lines = new THREE.Group();
-    const mkLine = (len, thick) => new THREE.Mesh(
-      new THREE.PlaneGeometry(thick, len),
-      new THREE.MeshBasicMaterial({ color: 0x9bd1ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
-    );
-    const L = 0.5, T = 0.04;
-    [[0, L/2, 0],[0,-L/2,0],[L/2,0,Math.PI/2],[-L/2,0,Math.PI/2]].forEach(([x,y,rz=0])=>{
-      const p = mkLine(L,T); p.position.set(x,y,0); p.rotation.z = rz; lines.add(p);
-    });
     const g = new THREE.Group();
-    g.add(ring, lines);
+
+    const cfg = CONFIG.turret.crosshair || {};
+    const size = cfg.size ?? 0.6;
+    const thick = cfg.thickness ?? 0.10;
+
+    const inner = Math.max(0.0001, (size - thick) * 0.5);
+    const outer = (size * 0.5);
+
+    // Ring + zarte Outline (gut sichtbar)
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(inner, outer, 48),
+      new THREE.MeshBasicMaterial({ color: cfg.color ?? 0x9bd1ff, transparent: true, opacity: cfg.opacity ?? 0.95, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+    );
+    const outline = new THREE.Mesh(
+      new THREE.RingGeometry(inner*1.05, outer*1.05, 48),
+      new THREE.MeshBasicMaterial({ color: 0x001020, transparent: true, opacity: cfg.outlineOpacity ?? 0.35, depthWrite: false, side: THREE.DoubleSide })
+    );
+
+    // Center-Dot
+    const dotSize = (cfg.centerDot ?? 0.06);
+    const dot = new THREE.Mesh(
+      new THREE.CircleGeometry(dotSize*0.5, 24),
+      new THREE.MeshBasicMaterial({ color: cfg.color ?? 0x9bd1ff, transparent: true, opacity: cfg.opacity ?? 0.95, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide })
+    );
+
+    [ring, outline, dot].forEach(m => m.userData.ignoreHit = true); // nicht hittbar
+    g.add(outline, ring, dot);
     g.position.set(0, 1.2, -2);
     return g;
   }
 
-  // === Neue Handle-Logik (nur Geometrie/Position) ===
   #buildHandles(housing) {
-    const mat = new THREE.MeshStandardMaterial({ color: CONFIG.grips?.color ?? 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
+    const gripsCfg = CONFIG.grips || { mode: 'front-horizontal', front: {}, side: {}, color: 0x8899aa };
+    const mat = new THREE.MeshStandardMaterial({ color: gripsCfg.color ?? 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
 
-    // Hilfsfunktion: kleiner Montage-Arm (optisch)
     const makeBracket = (w=0.06,h=0.04,d=0.10) =>
       new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
         new THREE.MeshStandardMaterial({ color: 0x5a6b7d, metalness: 0.25, roughness: 0.6 }));
 
-    const mode = CONFIG.grips?.mode ?? 'front-horizontal';
-
-    if (mode === 'side-vertical') {
-      const g = CONFIG.grips.side;
+    if (gripsCfg.mode === 'side-vertical') {
+      const g = gripsCfg.side || {};
       const r = g.radius ?? 0.03;
       const len = g.length ?? 0.16;
       const spread = g.spread ?? 0.28;
@@ -122,31 +135,27 @@ export class Turret {
       const height = g.height ?? 0.02;
       const tiltIn = THREE.MathUtils.degToRad(g.tiltInDeg ?? 12);
 
-      // Vertikale „Pistol“-Griffe: Achse = Y
+      // Vertikale Griffe (Achse Y)
       const geo = new THREE.CylinderGeometry(r, r, len, 18);
       this.leftHandle  = new THREE.Mesh(geo, mat.clone());
       this.rightHandle = new THREE.Mesh(geo, mat.clone());
 
-      // Positionen relativ zum Pitch-Pivot (rotieren bei Pitch mit)
       this.leftHandle.position.set(-spread, height, -forward);
       this.rightHandle.position.set(+spread, height, -forward);
 
-      // Leichte Schrägstellung nach innen (um X drehen → kippt Richtung Spieler)
-      this.leftHandle.rotation.x =  tiltIn;
+      this.leftHandle.rotation.x = tiltIn;
       this.rightHandle.rotation.x = tiltIn;
 
-      // Kleine Montagearme, die die Griffe am Housing verbinden
       const lBracket = makeBracket(0.04, 0.04, forward + 0.06);
       const rBracket = lBracket.clone();
-
       lBracket.position.set(-spread, height, -(forward*0.5));
       rBracket.position.set(+spread, height, -(forward*0.5));
 
       this.pitchPivot.add(this.leftHandle, this.rightHandle, lBracket, rBracket);
 
     } else {
-      // Default/Bestand: Front-Horizontal (wie bisher)
-      const g = CONFIG.grips.front;
+      // Standard: front-horizontal
+      const g = gripsCfg.front || {};
       const r = g.radius ?? 0.03;
       const len = g.length ?? 0.16;
       const spread = g.spread ?? 0.22;
@@ -158,14 +167,12 @@ export class Turret {
       this.leftHandle  = new THREE.Mesh(geo, mat.clone());
       this.rightHandle = new THREE.Mesh(geo, mat.clone());
 
-      // Horizontaler Stab: um z-Achse rollen
       this.leftHandle.rotation.z = roll;
       this.rightHandle.rotation.z = roll;
 
       this.leftHandle.position.set(-spread, height, forward);
       this.rightHandle.position.set(+spread, height, forward);
 
-      // Montagearme
       const lBracket = makeBracket(0.05, 0.04, forward + 0.04);
       const rBracket = lBracket.clone();
       lBracket.position.set(-spread, height, forward * 0.5);
@@ -175,13 +182,12 @@ export class Turret {
     }
   }
 
-  // Alte API bleibt (Steuerung unverändert)
+  // Steuerungs-API (unverändert)
   setAimDirection(worldDir) {
     const xzLen = Math.hypot(worldDir.x, worldDir.z);
     let yaw   = Math.atan2(worldDir.x, -worldDir.z);
     let pitch = Math.atan2(worldDir.y, xzLen);
 
-    // Invert-Flags wirken nur auf Zielwinkel (keine Logikänderung)
     if (CONFIG.turret.invertYaw)   yaw = -yaw;
     if (CONFIG.turret.invertPitch) pitch = -pitch;
 
@@ -200,6 +206,7 @@ export class Turret {
     this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   1 - Math.exp(-yspd * dt));
     this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, 1 - Math.exp(-pspd * dt));
 
+    // Crosshair anvisieren & zur Kamera drehen (billboard)
     if (this.crosshairRenderEnabled) {
       const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(this.pitchPivot.getWorldQuaternion(new THREE.Quaternion()));
       const muzzleWorld = this.pitchPivot.getWorldPosition(new THREE.Vector3());
