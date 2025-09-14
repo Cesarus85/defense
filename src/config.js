@@ -81,7 +81,7 @@ export const CONFIG = {
 
     grips: {
     // Umschalten: 'front-horizontal' (bisher) oder 'side-vertical' (neu)
-    mode: 'front-horizontal',
+    mode: 'side-vertical',
 
     front: {
       spread: 0.22,     // Abstand links/rechts von der Mitte (m)
