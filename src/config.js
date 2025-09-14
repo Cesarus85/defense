@@ -32,22 +32,21 @@ export const CONFIG = {
     // Placement & control
     offsetZFromPlayer: -0.4,     // ~40 cm vor dir (auf Bodenhöhe platziert)
     requireGrabToAim: true,
-    requireBothHandsToAim: true, // beide Griffe für Steuerung
+    requireBothHandsToAim: true, // beide Griffe für Steuerung (teste false für Einhand)
 
     // Aiming-Modus
-    controlMode: 'absolute',     // 'absolute' | 'delta'
+    controlMode: 'delta',        // Gewechselt zu 'delta' für relative Steuerung (vermeidet Initial-Down)
 
     // Invert-Flags (greifen wir explizit im main.js auf)
     invertYaw:   false,
-    invertPitch: true,           // ↑ / ↓ wieder wie gewünscht
-                                 // (true macht "Hände hoch" => Rohr hoch)
+    invertPitch: true,           // ↑ / ↓ wieder wie gewünscht (true: "Hände hoch" => Rohr hoch)
 
-    // Delta-Grip Sensitivität (falls du später auf 'delta' wechselst)
-    sensitivityYaw:   1.0,
-    sensitivityPitch: 1.0,
-    deadzoneDeg: 0.4,
+    // Delta-Grip Sensitivität
+    sensitivityYaw:   1.5,       // Erhöht für responsivere Deltas (war 1.0)
+    sensitivityPitch: 1.5,       // Dito
+    deadzoneDeg: 0.2,            // Reduziert für weniger Totzone (war 0.4)
 
-    // Neu: Pitch-Offset, um natürliche Handhaltung zu kompensieren (verhindert Initial-Down)
+    // Pitch-Offset (für 'absolute'-Modus, falls du zurückwechselst)
     pitchOffset: 0.3             // ca. 17° hoch, anpassen nach Bedarf
   },
 
