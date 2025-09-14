@@ -21,7 +21,7 @@ function init() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
-  // Enter VR Button (minimale Features)
+  // Enter VR Button
   document.body.appendChild(
     VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] })
   );
@@ -85,7 +85,7 @@ function init() {
 
   // Turret erzeugen
   turret = new Turret();
-  turret.addTo(scene); // fügt auch Crosshair hinzu
+  turret.addTo(scene);
 
   // Input inkl. Griff-Referenzen (Greifen/Arretieren)
   input = createInput(renderer, scene, camera, {
@@ -95,7 +95,7 @@ function init() {
   // Bei Start einer VR-Session später korrekt relativ zur HMD-Pose platzieren
   renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; });
 
-  // Desktop-Vorschau: initial 0.4 m vor der Kamera auf Bodenhöhe platzieren
+  // Desktop-Vorschau: initial vor der Kamera auf Bodenhöhe platzieren
   placeTurretFromCamera(camera);
 
   window.addEventListener('resize', onWindowResize);
@@ -115,9 +115,10 @@ function startLoop() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
 
-    // Einmalige Platzierung nach Eintritt in VR, wenn HMD-Pose gültig ist
+    // Einmalige Platzierung nach Eintritt in VR, mit echter XR-Kamera
     if (needPlaceFromHMD) {
-      placeTurretFromCamera(camera); // camera ist in VR an die HMD-Pose gekoppelt
+      const xrCam = renderer.xr.isPresenting ? renderer.xr.getCamera(camera) : camera;
+      placeTurretFromCamera(xrCam);
       needPlaceFromHMD = false;
     }
 
@@ -139,12 +140,14 @@ function startLoop() {
  * - y immer 0 (Bodenhöhe)
  * - in XZ um |offsetZFromPlayer| Meter vor dem Spieler
  * - Yaw an Blickrichtung ausrichten (kein Pitch/Roll)
+ * - Safety: Falls Rohr Richtung Spieler schauen würde → Yaw + PI
  */
 function placeTurretFromCamera(cam) {
   const headPos = new THREE.Vector3();
   cam.getWorldPosition(headPos);
 
-  const headQuat = cam.getWorldQuaternion(new THREE.Quaternion());
+  const headQuat = cam.getWorldQuaternion(new THREE.Quaternio
+
   const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
 
   // Nur horizontale Komponente (XZ) nutzen
@@ -152,15 +155,21 @@ function placeTurretFromCamera(cam) {
   if (fwdXZ.lengthSq() < 1e-6) fwdXZ.set(0, 0, -1);
   fwdXZ.normalize();
 
-  // Bodenposition + Abstand
+  // Bodenposition + Abstand VOR dem Spieler
   const dist = Math.abs(CONFIG.turret.offsetZFromPlayer);
-  const basePos = new THREE.Vector3(headPos.x, 0, headPos.z).add(fwdXZ.multiplyScalar(dist));
-
+  const basePos = new THREE.Vector3(headPos.x, 0, headPos.z).add(fwdXZ.clone().multiplyScalar(dist));
   turret.root.position.copy(basePos);
 
-  // Nur Yaw ausrichten
-  const yaw = Math.atan2(fwdXZ.x, -fwdXZ.z);
+  // Yaw so, dass -Z des Turrets mit fwdXZ ausgerichtet ist
+  let yaw = Math.atan2(fwdXZ.x, -fwdXZ.z);
   turret.root.rotation.set(0, yaw, 0);
+
+  // Safety: Prüfen, ob -Z wirklich "von dir weg" zeigt – sonst 180° drehen
+  const forwardAfterYaw = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(0, yaw, 0, 'XYZ'));
+  if (forwardAfterYaw.dot(fwdXZ) < 0) {
+    yaw += Math.PI;
+    turret.root.rotation.set(0, yaw, 0);
+  }
 
   // Startwinkel neutral
   turret.yawPivot.rotation.y = 0;
