@@ -7,12 +7,13 @@ import { Turret } from './turret.js';
 
 let scene, camera, renderer;
 let input, turret;
-let needPlaceFromHMD = false; // beim Sessionstart einmal korrekt platzieren
+let needPlaceFromHMD = false; // Nach VR-Sessionstart einmal korrekt platzieren
 
 init();
 startLoop();
 
 function init() {
+  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.xr.enabled = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -20,16 +21,18 @@ function init() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
+  // Enter VR Button (minimale Features)
   document.body.appendChild(
     VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] })
   );
 
+  // Szene & Kamera
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 2000);
-  camera.position.set(0, 1.6, 2); // Desktop-Start (in VR vom HMD überschrieben)
+  camera.position.set(0, 1.6, 2); // Desktop-Start; in VR übernimmt HMD
   scene.add(camera);
 
-  // Himmel
+  // Himmel (Gradient)
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
@@ -38,19 +41,36 @@ function init() {
       topColor:    { value: new THREE.Color(CONFIG.sky.topColor) },
       bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) }
     },
-    vertexShader: `varying vec3 vPos; void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader:`uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
-                    void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }`
+    vertexShader: `
+      varying vec3 vPos;
+      void main(){
+        vPos = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 topColor;
+      uniform vec3 bottomColor;
+      varying vec3 vPos;
+      void main(){
+        float h = normalize(vPos).y * 0.5 + 0.5;
+        gl_FragColor = vec4(mix(bottomColor, topColor, h), 1.0);
+      }
+    `
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
   // Licht
-  scene.add(new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity));
+  scene.add(new THREE.HemisphereLight(
+    CONFIG.lights.hemi.sky,
+    CONFIG.lights.hemi.ground,
+    CONFIG.lights.hemi.intensity
+  ));
   const dir = new THREE.DirectionalLight(CONFIG.lights.dir.color, CONFIG.lights.dir.intensity);
   dir.position.set(...CONFIG.lights.dir.position);
   scene.add(dir);
 
-  // Boden + Grid
+  // Boden + Grid (Boden liegt bei y=0)
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize),
     new THREE.MeshStandardMaterial({ color: 0x202a36, roughness: 1, metalness: 0 })
@@ -58,25 +78,27 @@ function init() {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
+
   const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x2e3b4b, 0x1b2430);
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // Turret-Objekt
+  // Turret erzeugen
   turret = new Turret();
-  scene.add(turret.root); // Positionierung erfolgt dynamisch (siehe placeTurretFromHMD)
+  turret.addTo(scene); // fügt auch Crosshair hinzu
 
-  // Input
+  // Input inkl. Griff-Referenzen (Greifen/Arretieren)
   input = createInput(renderer, scene, camera, {
     handles: { left: turret.leftHandle, right: turret.rightHandle }
   });
 
-  // Beim Start einer VR-Session korrekt relativ zum HMD platzieren
+  // Bei Start einer VR-Session später korrekt relativ zur HMD-Pose platzieren
   renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; });
-  window.addEventListener('resize', onWindowResize);
 
-  // Desktop-Vorschau: Turret 0.4 m vor der Kamera
+  // Desktop-Vorschau: initial 0.4 m vor der Kamera auf Bodenhöhe platzieren
   placeTurretFromCamera(camera);
+
+  window.addEventListener('resize', onWindowResize);
 }
 
 function onWindowResize() {
@@ -87,40 +109,57 @@ function onWindowResize() {
 
 function startLoop() {
   let last = performance.now();
+
   renderer.setAnimationLoop((time) => {
     const now = (typeof time === 'number') ? time : performance.now();
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
 
-    // Nach Sessionstart, wenn HMD-Pose valid ist, einmal korrekt platzieren
+    // Einmalige Platzierung nach Eintritt in VR, wenn HMD-Pose gültig ist
     if (needPlaceFromHMD) {
-      placeTurretFromCamera(renderer.xr.getCamera?.(camera) || camera);
+      placeTurretFromCamera(camera); // camera ist in VR an die HMD-Pose gekoppelt
       needPlaceFromHMD = false;
     }
 
     input.update?.(dt);
 
+    // Nur zielen, wenn Input freigibt (z. B. beide Griffe stabil)
     const aimDir = input.getAimDirection();
-    if (aimDir) turret.setAimDirection(aimDir);
+    if (aimDir) {
+      turret.setAimDirection(aimDir);
+    }
 
     turret.update(dt, camera);
     renderer.render(scene, camera);
   });
 }
 
-/** Positioniert & richtet das Turret relativ zur aktuellen Kamerapose aus. */
+/**
+ * Positioniert & richtet das Turret relativ zur aktuellen Kamerapose aus:
+ * - y immer 0 (Bodenhöhe)
+ * - in XZ um |offsetZFromPlayer| Meter vor dem Spieler
+ * - Yaw an Blickrichtung ausrichten (kein Pitch/Roll)
+ */
 function placeTurretFromCamera(cam) {
   const headPos = new THREE.Vector3();
   cam.getWorldPosition(headPos);
 
   const headQuat = cam.getWorldQuaternion(new THREE.Quaternion());
-  const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(headQuat).normalize();
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(headQuat);
 
-  // 0.40 m vor dem Kopf in Blickrichtung
-  turret.root.position.copy(headPos).add(fwd.clone().multiplyScalar(Math.abs(CONFIG.turret.offsetZFromPlayer)));
+  // Nur horizontale Komponente (XZ) nutzen
+  const fwdXZ = new THREE.Vector3(fwd.x, 0, fwd.z);
+  if (fwdXZ.lengthSq() < 1e-6) fwdXZ.set(0, 0, -1);
+  fwdXZ.normalize();
 
-  // Nur Yaw ausrichten (kein Pitch/Roll)
-  const yaw = Math.atan2(fwd.x, -fwd.z);
+  // Bodenposition + Abstand
+  const dist = Math.abs(CONFIG.turret.offsetZFromPlayer);
+  const basePos = new THREE.Vector3(headPos.x, 0, headPos.z).add(fwdXZ.multiplyScalar(dist));
+
+  turret.root.position.copy(basePos);
+
+  // Nur Yaw ausrichten
+  const yaw = Math.atan2(fwdXZ.x, -fwdXZ.z);
   turret.root.rotation.set(0, yaw, 0);
 
   // Startwinkel neutral
