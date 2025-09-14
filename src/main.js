@@ -1,5 +1,5 @@
 // /src/main.js
-// Delta bevorzugt (Option B), ansonsten absoluter Fallback. Rest (Audio/FX/Gun/Enemies) unverändert.
+// Delta bevorzugt (Option B), ansonsten absoluter Fallback. Steuerungslogik bleibt wie vereinbart.
 
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
@@ -8,7 +8,7 @@ import { createInput } from './input.js';
 import { Turret } from './turret.js';
 
 import { AudioManager } from './audio.js';
-import { MuzzleFlash, HitSparks } from './fx.js';
+import { MuzzleFlash, HitSparks, TracerPool } from './fx.js';
 import { HeatBar3D } from './ui.js';
 import { GunSystem } from './gun.js';
 import { EnemyManager } from './enemies.js';
@@ -17,8 +17,8 @@ let scene, camera, renderer;
 let input, turret;
 let needPlaceFromHMD = false;
 
-// Step2 Container
-const STEP2 = { audio: null, muzzleFx: null, hitFx: null, heatUI: null, gun: null };
+// Step2 Container (verhindert TDZ-Probleme)
+const STEP2 = { audio: null, muzzleFx: null, hitFx: null, heatUI: null, gun: null, tracers: null };
 
 // Step3
 let enemyMgr = null;
@@ -33,6 +33,7 @@ init();
 startLoop();
 
 function init() {
+  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.xr.enabled = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -40,22 +41,32 @@ function init() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
+  // VR Button
   document.body.appendChild(VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] }));
 
+  // Scene & Camera
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 2000);
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Sky
+  // Sky (simple gradient)
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
-    uniforms: { topColor: { value: new THREE.Color(CONFIG.sky.topColor) }, bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) } },
-    vertexShader: `varying vec3 vPos; void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader:`uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
-                    void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0);} `
+    uniforms: {
+      topColor:    { value: new THREE.Color(CONFIG.sky.topColor) },
+      bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) }
+    },
+    vertexShader: `
+      varying vec3 vPos;
+      void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+    `,
+    fragmentShader: `
+      uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
+      void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }
+    `
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
@@ -73,6 +84,7 @@ function init() {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
+
   const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x2e3b4b, 0x1b2430);
   grid.position.y = 0.01;
   scene.add(grid);
@@ -84,17 +96,17 @@ function init() {
   // Input
   input = createInput(renderer, scene, camera, { handles: { left: turret.leftHandle, right: turret.rightHandle } });
 
-  // VR place
+  // VR: nach Sessionstart sauber platzieren
   renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; resetDeltaBaseline(); });
 
-  // Desktop place
+  // Desktop: initial platzieren
   placeTurretFromCamera(getCurrentCamera());
 
-  // Step2
+  // Step 2 Systeme
   initStep2Systems();
   window.addEventListener('pointerdown', () => STEP2.audio?.ensure(), { once: true });
 
-  // Step3
+  // Step 3 Systeme
   initScoreUI();
   initEnemies();
 
@@ -102,11 +114,12 @@ function init() {
 }
 
 function initStep2Systems() {
-  STEP2.audio   = new AudioManager();
+  STEP2.audio    = new AudioManager();
   STEP2.muzzleFx = new MuzzleFlash(turret, CONFIG.fire.muzzleOffset);
   STEP2.hitFx    = new HitSparks(scene);
   STEP2.heatUI   = new HeatBar3D(scene, turret);
-  STEP2.gun      = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI);
+  STEP2.tracers  = new TracerPool(scene);
+  STEP2.gun      = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI, STEP2.tracers);
 }
 
 function initScoreUI() {
@@ -173,7 +186,7 @@ function startLoop() {
     // === Aiming ===
     let aimed = false;
 
-    // ✨ Option B: Delta bevorzugt
+    // Delta bevorzugt
     if (CONFIG.turret.controlMode === 'delta' && typeof input.getDeltaYawPitch === 'function') {
       const delta = input.getDeltaYawPitch();
       if (delta && delta.ok) {
@@ -192,11 +205,11 @@ function startLoop() {
         turret.setTargetAngles(targetYaw, targetPitch);
         aimed = true;
       } else {
-        hadRef = false; // Referenz erneut setzen, sobald stable
+        hadRef = false; // Referenz neu setzen, sobald wieder stable
       }
     }
 
-    // Fallback: Absolute Richtung (falls Delta noch nicht aktiv)
+    // Fallback: Absolut
     if (!aimed) {
       const dir = input.getAimDirection?.();
       if (dir) {
@@ -218,6 +231,7 @@ function startLoop() {
     STEP2.muzzleFx.update(dt, camera);
     STEP2.hitFx.update(dt);
     STEP2.heatUI.update(camera);
+    STEP2.tracers?.update(dt);
 
     if (enemyMgr) { enemyMgr.update(dt); updateScoreUI(); }
 
