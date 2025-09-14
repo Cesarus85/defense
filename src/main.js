@@ -1,5 +1,5 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.168.0/build/three.module.js';
-import { VRButton } from 'https://cdn.jsdelivr.net/npm/three@0.168.0/examples/jsm/webxr/VRButton.js';
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { CONFIG } from './config.js';
 import { createInput } from './input.js';
 import { Turret } from './turret.js';
@@ -8,10 +8,10 @@ let scene, camera, renderer;
 let input, turret;
 
 init();
-animate();
+startLoop();
 
 function init() {
-  // --- Renderer
+  // Renderer
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.xr.enabled = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -20,16 +20,19 @@ function init() {
   renderer.shadowMap.enabled = false;
   document.body.appendChild(renderer.domElement);
 
-  // VR Button
-  document.body.appendChild(VRButton.createButton(renderer));
+  // VR Button (optionale Features minimal halten)
+  const btn = VRButton.createButton(renderer, {
+    optionalFeatures: ['local-floor']
+  });
+  document.body.appendChild(btn);
 
-  // --- Scene & Camera
+  // Scene & Camera
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 2000);
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // --- Himmel (Gradient über Nebel)
+  // Himmel (Gradient)
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
@@ -55,18 +58,16 @@ function init() {
       }
     `
   });
-  const sky = new THREE.Mesh(skyGeo, skyMat);
-  scene.add(sky);
+  scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-  // --- Licht
+  // Licht
   const hemi = new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity);
   scene.add(hemi);
-
   const dir = new THREE.DirectionalLight(CONFIG.lights.dir.color, CONFIG.lights.dir.intensity);
   dir.position.set(...CONFIG.lights.dir.position);
   scene.add(dir);
 
-  // --- Bodenebene + Grid
+  // Boden + Grid
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize),
     new THREE.MeshStandardMaterial({ color: 0x202a36, roughness: 1, metalness: 0 })
@@ -74,22 +75,18 @@ function init() {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
-
   const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x2e3b4b, 0x1b2430);
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // --- Turret
+  // Turret
   turret = new Turret();
   turret.addTo(scene);
-  // Stelle die Spieler-Startposition auf Turret-Basis (optional): hier origin (0,0,0).
-  // Turret-Pivot ist bereits auf CONFIG.turret.height.
-  // Kamera bleibt frei, da in VR HMD-Pos gilt.
 
-  // --- Input
+  // Input
   input = createInput(renderer, scene, camera);
 
-  // --- Resizing
+  // Resize
   window.addEventListener('resize', onWindowResize);
 }
 
@@ -99,25 +96,20 @@ function onWindowResize() {
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-let last = performance.now();
-function animate() {
-  const now = performance.now();
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
+function startLoop() {
+  let last = performance.now();
 
-  // Input (Desktop Fallback / VR)
-  input.update?.();
+  renderer.setAnimationLoop((time) => {
+    const now = (typeof time === 'number') ? time : performance.now();
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
 
-  // Zielrichtung an Turret übergeben
-  const aimDir = input.getAimDirection();
-  turret.setAimDirection(aimDir);
+    input.update?.();
 
-  // Update Turret (Rotation & Crosshair)
-  turret.update(dt, camera);
+    const aimDir = input.getAimDirection();
+    turret.setAimDirection(aimDir);
+    turret.update(dt, camera);
 
-  renderer.setAnimationLoop(render);
-}
-
-function render() {
-  renderer.render(scene, camera);
+    renderer.render(scene, camera);
+  });
 }
