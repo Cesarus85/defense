@@ -1,98 +1,108 @@
-// Config tuned for direct "absolute" aiming + Step 2 systems
+// /src/config.js
+// Vollständige Config (inkl. Schießen/Heat/Haptik/UI + Gegner/Wellen)
+// HINWEIS: Steuerungs-Flags sind so gesetzt, dass deine Turret-Handhabung
+// NICHT verändert wird (delta-Mode, invertPitch=true, breakDist=1.0, pitchOffset=0.3).
+
 export const CONFIG = {
   targetFPS: 90,
   groundSize: 400,
 
+  // Sky gradient
   sky: { topColor: 0x0b1220, bottomColor: 0x152237 },
 
+  // Lighting
   lights: {
     hemi: { sky: 0xcfe3ff, ground: 0x2a3442, intensity: 0.65 },
     dir:  { color: 0xffffff, intensity: 1.0, position: [10, 15, 6] }
   },
 
-  // Input / Grip behavior
+  // Input / Grip
   input: {
     grabDist: 0.14,     // ≤ 14 cm zum Greifen
-    breakDist: 1.0,     // Erhöht auf 1m, um Entgleiten zu vermeiden – praktisch "festgesnappt"
-    stableDelay: 0.05   // 50 ms bis Steuerung aktiv (schnelleres Arretieren)
+    breakDist: 1.0,     // Griff löst sich erst >1 m → praktisch "eingesnappt"
+    stableDelay: 0.05   // 50 ms bis Steuerung aktiv
   },
 
+  // Turret & Aiming
   turret: {
     height: 1.20,
 
-    // Schnelle Reaktion (sehr direkt)
+    // Reaktionsgeschwindigkeit (Tweaks möglich, ohne Modus zu ändern)
     yawSpeed: 18.0,     // rad/s
     pitchSpeed: 18.0,
 
-    // Pitch limits
+    // Pitch-Limits
     minPitch: -0.6,     // ~ -34°
     maxPitch:  1.1,     // ~ +63°
     crosshairDistance: 200,
 
-    // Placement & control
-    offsetZFromPlayer: -0.4,     // ~40 cm vor dir (auf Bodenhöhe platziert)
+    // Platzierung (auf Boden in main.js positioniert)
+    offsetZFromPlayer: -0.4, // ~40 cm vor Spieler
+
+    // Greif-Anforderung
     requireGrabToAim: true,
-    requireBothHandsToAim: true, // beide Griffe für Steuerung (teste false für Einhand)
+    requireBothHandsToAim: true,
 
-    // Aiming-Modus
-    controlMode: 'delta',        // Gewechselt zu 'delta' für relative Steuerung (vermeidet Initial-Down)
-
-    // Invert-Flags (greifen wir explizit im main.js auf)
+    // Steuerungsmodus & Inverts (NICHT ändern ohne Absprache)
+    controlMode: 'delta', // 'absolute' | 'delta'
     invertYaw:   false,
-    invertPitch: true,           // ↑ / ↓ wieder wie gewünscht (true: "Hände hoch" => Rohr hoch)
+    invertPitch: true,
 
-    // Delta-Grip Sensitivität
-    sensitivityYaw:   1.5,       // Erhöht für responsivere Deltas (war 1.0)
-    sensitivityPitch: 1.5,       // Dito
-    deadzoneDeg: 0.2,            // Reduziert für weniger Totzone (war 0.4)
+    // Zusätzliche Steuerungs-Tweaks (Delta-Modus)
+    sensitivityYaw:   1.0,
+    sensitivityPitch: 1.0,
+    deadzoneDeg: 0.4,
 
-    // Pitch-Offset (für 'absolute'-Modus, falls du zurückwechselst)
-    pitchOffset: 0.3             // ca. 17° hoch, anpassen nach Bedarf
+    // Von dir genutzt – hier beibehalten
+    pitchOffset: 0.3
   },
 
-  // Firing / Heat
+  // Fire / Heat
   fire: {
-    rpm: 720,
-    damage: 12,
-    spreadDeg: 0.6,
-    heatPerShot: 2.8,
-    heatCoolRate: 16,
-    overheatThreshold: 100,
-    cooldownDelay: 0.20,
-    muzzleFlashMs: 40,
-    recoilPitch: 0.004,    // etwas reduziert, damit’s die Handführung nicht „wegdrückt“
-    muzzleOffset: 1.1,
-    range: 1500
+    rpm: 720,                 // Feuerrate
+    damage: 12,               // Schaden pro Schuss (für Gegner)
+    spreadDeg: 0.6,           // Streuung
+    heatPerShot: 2.8,         // Hitzezuwachs pro Schuss
+    heatCoolRate: 16,         // Abkühlung pro Sekunde
+    overheatThreshold: 100,   // Überhitzungsschwelle
+    cooldownDelay: 0.20,      // Schießen pausiert Abkühlung für X s
+    muzzleFlashMs: 40,        // Dauer Mündungsfeuer
+    recoilPitch: 0.004,       // leichter Rückstoß (beeinflusst Ziel nur minimal)
+    muzzleOffset: 1.1,        // Distanz Mündung vom Pivot (entlang -Z)
+    range: 1500               // Hitscan-Reichweite
   },
 
+  // Haptik (Meta/SteamVR Controller mit Rumble)
   haptics: {
     shotAmp: 0.6,   shotMs: 22,
     overheatAmp: 0.9, overheatMs: 70
   },
 
+  // UI
   ui: {
     heatBar: {
-      offset: [0.35, 0.18, 0.32],
-      size: [0.28, 0.035],
+      offset: [0.35, 0.18, 0.32],   // Position relativ am yawPivot
+      size: [0.28, 0.035],          // Breite/Höhe (Meter)
       background: 0x10161f,
       fill: 0x93b5ff
     }
-  }
-    enemies: {
-    // Spawns
-    spawnRadius: 120,      // Radius des Spawn-Kreises um das Turret
-    attackRadius: 3.2,     // Abstand, in dem der Gegner "angekommen" ist
-    firstWaveCount: 6,     // Startanzahl
-    waveGrowth: 1.35,      // Multiplikator pro Welle
-    spawnInterval: 0.35,   // Abstand zwischen Einzelsplits
-    wavePause: 4.0,        // Pause nach Welle (wenn alle tot)
-
-    // Typ "grunt" (Bodenläufer)
-    grunt: {
-      speed: 3.0,          // m/s
-      health: 40,          // HP
-      reward: 10           // Punkte pro Kill
-    }
   },
 
+  // Enemies / Waves
+  enemies: {
+    // Spawn-Logik um das Turret
+    spawnRadius: 120,       // Radius des Spawn-Kreises
+    attackRadius: 3.2,      // in diesem Abstand gilt "angekommen"
+    firstWaveCount: 6,      // Startanzahl pro Welle
+    waveGrowth: 1.35,       // Multiplikator pro Welle
+    spawnInterval: 0.35,    // Zeit zwischen einzelnen Spawns
+    wavePause: 4.0,         // Pause bis zur nächsten Welle (wenn alle tot)
+
+    // Gegner-Typ "grunt" (Bodenläufer, Basis-Gegner)
+    grunt: {
+      speed: 3.0,           // m/s
+      health: 40,           // HP
+      reward: 10            // Score pro Kill
+    }
+  }
 };
