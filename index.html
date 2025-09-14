@@ -3,12 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <!-- Erlaubt später WebXR-Zugriff im Browser -->
   <meta http-equiv="Permissions-Policy" content="xr-spatial-tracking=(self)" />
-  <title>AR Turret Defense — Step 0</title>
+  <title>AR Turret Defense — Step 1</title>
   <link rel="stylesheet" href="styles.css" />
-
-  <!-- Import Map: stabile three.js-Version + Addons für spätere Schritte -->
   <script type="importmap">
   {
     "imports": {
@@ -21,15 +18,14 @@
 <body>
   <div id="app" class="app"></div>
 
-  <!-- Einfache Overlay-UI (nur Status in Step 0) -->
   <div id="overlay" class="overlay noselect">
     <div class="overlay-row">
       <strong>AR Turret Defense</strong>
       <span id="status">Booting…</span>
+      <button id="btn-start-ar" class="btn">AR starten</button>
     </div>
   </div>
 
-  <!-- Einstiegspunkt -->
   <script type="module" src="src/main.js"></script>
 </body>
 </html>
