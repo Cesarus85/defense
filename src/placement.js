@@ -1,5 +1,13 @@
+// /src/placement.js
 import * as THREE from 'three';
 
+/**
+ * Reticle wie in "battleshipnew": 
+ * - Priorität: Controller-HitTest (transient) -> Downward-HitTest -> mathematisch auf local-floor (y=0)
+ * - Deutlich sichtbares Dual-Ring-Overlay (tiefer Kontrast, depthTest off)
+ * - Smoothing für Position/Rotation, Mindestabstand zum Kopf, dynamische Skalierung
+ * - Yaw-Feinrotation per rechtem Stick bleibt erhalten
+ */
 export function createPlacementController({
   scene,
   session,
@@ -7,12 +15,18 @@ export function createPlacementController({
   viewerDownHitTestSource,
   transientHitTestSource
 }) {
-  const reticle = makeReticle();
+  const reticle = makeHighContrastReticle();
   scene.add(reticle);
 
   let placed = false;
   let base = null;
-  let yawAccum = 0; // Zusatzrotation um Y per rechtem Stick
+  let yawAccum = 0;               // zusätzliche Y-Rotation via rechter Thumbstick
+  let hasPoseOnce = false;        // für sanften Einblend-Start
+  const tmpPos = new THREE.Vector3();
+  const tmpQuat = new THREE.Quaternion();
+  const tmpScale = new THREE.Vector3();
+  const targetPos = new THREE.Vector3();
+  const targetQuat = new THREE.Quaternion();
 
   // Trigger/Select bestätigt Platzierung
   const onSelect = () => {
@@ -29,142 +43,72 @@ export function createPlacementController({
   function update({ frame, dt = 0 }) {
     if (placed) return;
 
-    // Rechter Thumbstick -> Yaw
+    // Rechter Thumbstick: extra Yaw
     for (const src of session.inputSources) {
       if (src?.handedness === 'right' && src.gamepad?.axes?.length >= 2) {
         const x = src.gamepad.axes[0] || 0;
         const dead = Math.abs(x) < 0.15 ? 0 : x;
-        if (dead) yawAccum += dead * dt * 1.8;
+        if (dead) yawAccum += dead * dt * 1.8; // 1.8 rad/s als angenehme Drehrate
       }
     }
 
     const viewerPose = frame.getViewerPose(referenceSpace);
     if (!viewerPose) { reticle.visible = false; return; }
+    const head = new THREE.Vector3(
+      viewerPose.transform.position.x,
+      viewerPose.transform.position.y,
+      viewerPose.transform.position.z
+    );
 
-    // --- 1) Versuch: Transient/Controller Hit-Test (echte plane)
-    let pose = null;
-    if (transientHitTestSource) {
-      const trResults = frame.getHitTestResultsForTransientInput(transientHitTestSource);
-      let best = null;
-      for (const tr of trResults) {
-        if (!best) best = tr;
-        if (tr.inputSource?.handedness === 'right') { best = tr; break; }
-      }
-      if (best?.results?.length) {
-        pose = best.results[0].getPose(referenceSpace) || null;
-      }
+    // --- 1) Bevorzugt: Controller-Transient-HitTest (präzises Zielen) ---
+    let pose = getControllerHitPose(frame, referenceSpace, transientHitTestSource);
+
+    // --- 2) Fallback: Downward-HitTest (stabiler Boden-Treffer) ---
+    if (!pose) pose = getDownwardHitPose(frame, referenceSpace, viewerDownHitTestSource);
+
+    // --- 3) Finaler Fallback: mathematisch Kopf gerade nach unten auf y=0 (local-floor) ---
+    if (!pose) pose = getMathDownToY0Pose(viewerPose);
+
+    if (!pose) { reticle.visible = false; return; }
+
+    // Pose -> Ziel-Position/Rotation
+    const mat = new THREE.Matrix4().fromArray(pose.transform.matrix);
+    mat.decompose(targetPos, targetQuat, tmpScale);
+
+    // Mindestabstand: verhindert monokulare Effekte/nur-rechtes-Auge
+    const minDist = 0.5; // m
+    const v = new THREE.Vector3().subVectors(targetPos, head);
+    if (v.length() < minDist) {
+      const fwd = getViewerForward(viewerPose);
+      fwd.y = 0; fwd.normalize();
+      targetPos.copy(head).addScaledVector(fwd, minDist);
+      targetPos.y = 0; // local-floor annehmen
+      targetQuat.identity(); // flach
     }
 
-    // --- 2) Mathemischer Fallback: rechter Controller-Ray -> Ebene y=0
-    if (!pose) {
-      const rightSrc = [...session.inputSources].find(s => s.handedness === 'right' && s.targetRaySpace);
-      if (rightSrc) {
-        const rightPose = frame.getPose(rightSrc.targetRaySpace, referenceSpace);
-        if (rightPose) {
-          // Ray: Ursprung & Richtung aus Controller
-          const o = new THREE.Vector3(
-            rightPose.transform.position.x,
-            rightPose.transform.position.y,
-            rightPose.transform.position.z
-          );
-          const q = new THREE.Quaternion(
-            rightPose.transform.orientation.x,
-            rightPose.transform.orientation.y,
-            rightPose.transform.orientation.z,
-            rightPose.transform.orientation.w
-          );
-          const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(q).normalize();
+    // Reticle flach auf Ebene halten + Yaw vom Stick
+    // Hinweis: Reticle-Geometrie liegt im **XY**-Plane (nicht vorrotiert).
+    // targetQuat orientiert XY bereits zur getroffenen Ebene (Hit-Test).
+    const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yawAccum);
+    targetQuat.multiply(yawQ);
 
-          const hit = intersectRayWithY0(o, dir); // null oder {x,y,z}
-          if (hit) {
-            pose = {
-              transform: {
-                matrix: new XRRigidTransform(
-                  { x: hit.x, y: hit.y, z: hit.z },
-                  { x: 0, y: 0, z: 0, w: 1 } // flach, normal nach oben
-                ).matrix
-              },
-              // Dummy-Wrap damit der Code weiter unten funktioniert
-              get transformMatrix() { return this.transform.matrix; }
-            };
-          }
-        }
-      }
-    }
+    // Soft-Smoothing (frame-rate aware)
+    // alpha ~ 0.22 @60fps, ~0.3 @90fps
+    const alpha = 1.0 - Math.pow(0.78, Math.max(1, dt * 60));
+    reticle.position.lerp(targetPos, alpha);
+    THREE.Quaternion.slerp(reticle.quaternion, targetQuat, reticle.quaternion, alpha);
 
-    // --- 3) Fallback: Downward Headset → Ebene y=0 (oder echter Treffer, wenn vorhanden)
-    if (!pose) {
-      // a) echter Downward-HitTest (falls UA liefert)
-      if (viewerDownHitTestSource) {
-        const results = frame.getHitTestResults(viewerDownHitTestSource);
-        if (results?.length) {
-          const p = results[0].getPose(referenceSpace);
-          if (p) pose = p;
-        }
-      }
-      // b) mathematisch straight down auf y=0
-      if (!pose) {
-        const o = new THREE.Vector3(
-          viewerPose.transform.position.x,
-          viewerPose.transform.position.y,
-          viewerPose.transform.position.z
-        );
-        const dir = new THREE.Vector3(0, -1, 0);
-        const hit = intersectRayWithY0(o, dir);
-        if (hit) {
-          pose = {
-            transform: {
-              matrix: new XRRigidTransform(
-                { x: hit.x, y: hit.y, z: hit.z },
-                { x: 0, y: 0, z: 0, w: 1 }
-              ).matrix
-            }
-          };
-        }
-      }
-    }
-
-    if (pose) {
-      // Pose -> Reticle
-      const mat = new THREE.Matrix4().fromArray(pose.transform.matrix);
-      const pos = new THREE.Vector3();
-      const rot = new THREE.Quaternion();
-      const scl = new THREE.Vector3();
-      mat.decompose(pos, rot, scl);
-
-      // Sicherheits-Minimalabstand (verhindert „im Auge kleben" / Monokular-Effekt)
-      const head = new THREE.Vector3(
-        viewerPose.transform.position.x,
-        viewerPose.transform.position.y,
-        viewerPose.transform.position.z
-      );
-      const minDist = 0.4; // Meter
-      
-      // Berechne horizontale Distanz (ohne Y-Komponente) für bessere Bodenerkennung
-      const headFlat = new THREE.Vector3(head.x, pos.y, head.z);
-      const horizontalDist = pos.distanceTo(headFlat);
-      
-      if (horizontalDist < minDist) {
-        // schiebe das Reticle auf der Bodenebene in Blickrichtung etwas nach vorn
-        const forward = getViewerForward(viewerPose);
-        forward.y = 0; forward.normalize();
-        
-        // Ausgehend von der Kopfposition auf Bodenhöhe
-        const startPos = new THREE.Vector3(head.x, pos.y, head.z);
-        pos.copy(startPos).addScaledVector(forward, minDist);
-      }
-
-      // Orientierung immer flach auf Boden + Yaw vom Stick
-      const flat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/2);
-      const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yawAccum);
-      const finalQ = new THREE.Quaternion().multiplyQuaternions(yawQ, flat);
-
-      reticle.position.copy(pos);
-      reticle.quaternion.copy(finalQ);
+    // Sichtbarkeit erst nach dem ersten validen Pose-Frame
+    if (!hasPoseOnce) {
+      hasPoseOnce = true;
       reticle.visible = true;
-    } else {
-      reticle.visible = false;
+      reticle.children.forEach(c => c.visible = true);
     }
+
+    // Distanzbasierte Skalierung -> konstante visuelle Größe
+    const dist = reticle.position.distanceTo(head);
+    const s = THREE.MathUtils.clamp(0.12 + dist * 0.06, 0.14, 0.38);
+    reticle.scale.lerp(new THREE.Vector3(s, s, s), 0.25);
   }
 
   function isPlaced() { return placed; }
@@ -173,28 +117,79 @@ export function createPlacementController({
   return { update, isPlaced, getObject };
 }
 
-/* ---------- Helpers ---------- */
+/* ---------------- Helpers (Hit-Tests) ---------------- */
 
-function makeReticle() {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(0.12, 0.16, 40, 1).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x00ff99, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+function getControllerHitPose(frame, referenceSpace, transientHitTestSource) {
+  if (!transientHitTestSource) return null;
+  const trResults = frame.getHitTestResultsForTransientInput(transientHitTestSource);
+  if (!trResults?.length) return null;
+
+  // Bevorzuge rechten Controller, sonst ersten nehmen
+  let best = null;
+  for (const tr of trResults) {
+    if (!best) best = tr;
+    if (tr.inputSource?.handedness === 'right') { best = tr; break; }
+  }
+  if (!best?.results?.length) return null;
+
+  const pose = best.results[0].getPose(referenceSpace);
+  return pose || null;
+}
+
+function getDownwardHitPose(frame, referenceSpace, viewerDownHitTestSource) {
+  if (!viewerDownHitTestSource) return null;
+  const results = frame.getHitTestResults(viewerDownHitTestSource);
+  if (!results?.length) return null;
+  const pose = results[0].getPose(referenceSpace);
+  return pose || null;
+}
+
+function getMathDownToY0Pose(viewerPose) {
+  // Kopfposition senkrecht nach unten auf y=0
+  const o = new THREE.Vector3(
+    viewerPose.transform.position.x,
+    viewerPose.transform.position.y,
+    viewerPose.transform.position.z
   );
+  if (o.y <= 0.001) return null;
+  const hit = { x: o.x, y: 0, z: o.z };
+  // Quaternion identity => XY-Plane liegt auf dem Boden
+  const t = new XRRigidTransform({ x: hit.x, y: hit.y, z: hit.z }, { x: 0, y: 0, z: 0, w: 1 });
+  return { transform: { matrix: t.matrix } };
+}
 
+/* ---------------- Helpers (Reticle/Visuals) ---------------- */
+
+function makeHighContrastReticle() {
+  const g = new THREE.Group();
+  g.visible = false;
+
+  // Tiefer Kontrast: dunkler äußerer Ring (Overlay, depthTest off)
+  const outer = new THREE.Mesh(
+    new THREE.RingGeometry(0.18, 0.22, 48, 1),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.55, depthTest: false, depthWrite: false })
+  );
+  outer.renderOrder = 999; // immer oben
+
+  // Heller innerer Ring
+  const inner = new THREE.Mesh(
+    new THREE.RingGeometry(0.12, 0.165, 48, 1),
+    new THREE.MeshBasicMaterial({ color: 0x3cf0c8, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false })
+  );
+  inner.renderOrder = 1000;
+
+  // Kreuz (Linien)
   const crossGeo = new THREE.BufferGeometry();
-  const verts = new Float32Array([ -0.04,0,0,  0.04,0,0,   0,0,-0.04,  0,0,0.04 ]);
+  const verts = new Float32Array([ -0.045,0,0,  0.045,0,0,   0,0,-0.045,  0,0,0.045 ]);
   crossGeo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
   crossGeo.setIndex([0,1, 2,3]);
   const cross = new THREE.LineSegments(
     crossGeo,
-    new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.8 })
+    new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false })
   );
-  cross.rotation.x = -Math.PI / 2;
+  cross.renderOrder = 1001;
 
-  const g = new THREE.Group();
-  g.add(ring);
-  g.add(cross);
-  g.visible = false;
+  g.add(outer, inner, cross);
   return g;
 }
 
@@ -211,25 +206,9 @@ function makeTurretBase() {
   );
   ringMesh.rotation.x = -Math.PI / 2;
   base.add(ringMesh);
-
   return base;
 }
 
-// Schnittpunkt eines Rays mit der Bodenebene y=0
-function intersectRayWithY0(origin, dir) {
-  const oy = origin.y, dy = dir.y;
-  if (Math.abs(dy) < 1e-3) return null; // parallel zur Ebene
-  const t = -oy / dy;
-  if (t <= 0) return null; // hinter dem Ursprung
-  const hit = {
-    x: origin.x + dir.x * t,
-    y: 0,
-    z: origin.z + dir.z * t
-  };
-  return hit;
-}
-
-// Vorwärtsvektor des Viewers
 function getViewerForward(viewerPose) {
   const q = new THREE.Quaternion(
     viewerPose.transform.orientation.x,
