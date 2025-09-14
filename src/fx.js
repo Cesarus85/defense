@@ -4,19 +4,17 @@ export class MuzzleFlash {
   constructor(turret, offset = 1.1) {
     this.turret = turret;
     this.life = 0;
-    // Einfaches Additive-Sprite
     const tex = makeCircleTexture();
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
     this.sprite = new THREE.Sprite(mat);
     this.sprite.scale.set(0.22, 0.22, 0.22);
+    this.sprite.userData.ignoreHit = true; // ❗ FX nicht hittbar
     this.offset = offset;
     turret.pitchPivot.add(this.sprite);
     this.sprite.position.set(0, 0, -this.offset);
     this.sprite.visible = false;
   }
-  trigger(ms = 40) {
-    this.life = ms / 1000; this.sprite.visible = true;
-  }
+  trigger(ms = 40) { this.life = ms / 1000; this.sprite.visible = true; }
   update(dt, camera) {
     if (this.life > 0) {
       this.life -= dt;
@@ -54,12 +52,12 @@ export class HitSparks {
   }
 }
 
-// helpers
 function makeSpark() {
   const tex = makeCircleTexture(128, 0xffddaa);
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   const spr = new THREE.Sprite(mat);
   spr.scale.set(0.15, 0.15, 0.15);
+  spr.userData.ignoreHit = true; // ❗ Spark nicht hittbar
   return spr;
 }
 
