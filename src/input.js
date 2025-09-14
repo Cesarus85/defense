@@ -5,6 +5,7 @@ import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFa
 export function createInput(renderer, scene, camera, opts = {}) {
   const handles = opts.handles || null;     // { left: Mesh, right: Mesh }
   const GRAB_DIST = 0.14;                   // ~14 cm Griff-Reichweite
+  const STABLE_DELAY = 0.15;                // 150 ms: erst dann Aiming freigeben
 
   const state = {
     controllers: [
@@ -12,6 +13,10 @@ export function createInput(renderer, scene, camera, opts = {}) {
       { index: 1, controller: renderer.xr.getController(1), grip: renderer.xr.getControllerGrip(1), handedness: null, grabbing: false },
     ],
     hasVR: false,
+    bothGrabTimer: 0,
+    bothGrabStable: false,
+
+    // Desktop-Fallback
     mouseYaw: 0, mousePitch: 0, mouseActive: false,
     canvas: renderer.domElement,
   };
@@ -23,7 +28,9 @@ export function createInput(renderer, scene, camera, opts = {}) {
       entry.handedness = e.data.handedness || null;
       entry.grip.userData.handedness = entry.handedness;
     });
-    entry.controller.addEventListener('disconnected', () => { entry.handedness = null; entry.grabbing = false; });
+    entry.controller.addEventListener('disconnected', () => {
+      entry.handedness = null; entry.grabbing = false;
+    });
 
     const model = factory.createControllerModel(entry.grip);
     entry.grip.add(model);
@@ -40,6 +47,8 @@ export function createInput(renderer, scene, camera, opts = {}) {
     });
     entry.controller.addEventListener('squeezeend', () => {
       entry.grabbing = false;
+      state.bothGrabTimer = 0;
+      state.bothGrabStable = false;
       if (handles) {
         handles.left.material.emissive.setHex(0x000000);
         handles.left.material.emissiveIntensity = 0.0;
@@ -54,7 +63,11 @@ export function createInput(renderer, scene, camera, opts = {}) {
 
   // Session-Events
   renderer.xr.addEventListener('sessionstart', () => { state.hasVR = true; });
-  renderer.xr.addEventListener('sessionend',   () => { state.hasVR = false; state.controllers.forEach(c=>c.grabbing=false); });
+  renderer.xr.addEventListener('sessionend',   () => {
+    state.hasVR = false;
+    state.controllers.forEach(c=>c.grabbing=false);
+    state.bothGrabTimer = 0; state.bothGrabStable = false;
+  });
 
   // Desktop-Fallback (Maus)
   state.canvas.style.touchAction = 'none';
@@ -102,27 +115,43 @@ export function createInput(renderer, scene, camera, opts = {}) {
   const _sum = new THREE.Vector3();
 
   return {
-    update() { proximityHighlight(); },
+    update(dt=0) {
+      proximityHighlight();
+
+      // Stable-Gate: erst wenn beide Griffe halten und 150ms verstrichen
+      if (CONFIG.turret.requireBothHandsToAim) {
+        const both = state.controllers[0].grabbing && state.controllers[1].grabbing;
+        if (both) {
+          state.bothGrabTimer += dt;
+          if (state.bothGrabTimer >= STABLE_DELAY) state.bothGrabStable = true;
+        } else {
+          state.bothGrabTimer = 0;
+          state.bothGrabStable = false;
+        }
+      }
+    },
 
     /**
-     * Liefert eine Vorwärts-Richtung fürs Zielen.
-     * - VR + requireGrabToAim: Nur wenn mind. ein Controller GRIFFT.
-     * - Greifen mit beiden Händen: gemittelter Forward-Vektor (stabiler).
-     * - Desktop: Maus.
-     * - Wenn VR & kein Griff aktiv: return null (Turret bleibt stehen).
+     * Liefert die Aiming-Richtung oder null (wenn noch nicht „stabil gegriffen“).
      */
     getAimDirection() {
       if (state.hasVR) {
-        const active = state.controllers.filter(c => c.grabbing);
-        if (CONFIG.turret.requireGrabToAim && active.length === 0) return null;
-
-        if (active.length > 0) {
-          _sum.set(0,0,0);
-          for (const c of active) _sum.add(getForward(c.grip));
-          return _sum.multiplyScalar(1/active.length).normalize();
+        if (CONFIG.turret.requireGrabToAim) {
+          if (CONFIG.turret.requireBothHandsToAim) {
+            if (!state.bothGrabStable) return null;
+            // beide aktiv
+            _sum.set(0,0,0);
+            for (const c of state.controllers) _sum.add(getForward(c.grip));
+            return _sum.multiplyScalar(0.5).normalize();
+          } else {
+            const active = state.controllers.filter(c => c.grabbing);
+            if (active.length === 0) return null;
+            _sum.set(0,0,0);
+            for (const c of active) _sum.add(getForward(c.grip));
+            return _sum.multiplyScalar(1/active.length).normalize();
+          }
         }
-
-        // Fallback wenn requireGrabToAim = false:
+        // Fallback (wenn requireGrabToAim=false)
         const right = state.controllers.find(c => c.handedness === 'right') || state.controllers[0];
         if (right) return getForward(right.grip);
         return new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize();
