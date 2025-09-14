@@ -8,34 +8,35 @@ export class Turret {
     this.pitchPivot = new THREE.Group();
     this.crosshair = this.#makeCrosshair();
 
-    // --- Base
-    const baseGeo = new THREE.CylinderGeometry(0.35, 0.45, 0.42, 16);
-    const baseMat = new THREE.MeshStandardMaterial({ color: 0x394654, metalness: 0.1, roughness: 0.8 });
-    const base = new THREE.Mesh(baseGeo, baseMat);
-    base.receiveShadow = true;
-    base.position.y = 0.21;
+    // Base
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.35, 0.45, 0.42, 16),
+      new THREE.MeshStandardMaterial({ color: 0x394654, metalness: 0.1, roughness: 0.8 })
+    );
+    base.position.y = 0.21; base.receiveShadow = true;
     this.root.add(base);
 
-    // --- Säule
-    const poleGeo = new THREE.CylinderGeometry(0.18, 0.2, CONFIG.turret.height, 12);
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0x445566, metalness: 0.2, roughness: 0.65 });
-    const pole = new THREE.Mesh(poleGeo, poleMat);
+    // Säule
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.2, CONFIG.turret.height, 12),
+      new THREE.MeshStandardMaterial({ color: 0x445566, metalness: 0.2, roughness: 0.65 })
+    );
     pole.position.y = CONFIG.turret.height * 0.5 + 0.21;
     this.root.add(pole);
 
-    // --- Pivots
+    // Pivots
     this.yawPivot.position.y = CONFIG.turret.height + 0.21;
     this.root.add(this.yawPivot);
     this.yawPivot.add(this.pitchPivot);
 
-    // --- Gun housing
+    // Housing
     const housing = new THREE.Mesh(
       new THREE.BoxGeometry(0.42, 0.26, 0.42),
       new THREE.MeshStandardMaterial({ color: 0x56697d, metalness: 0.25, roughness: 0.6 })
     );
     this.pitchPivot.add(housing);
 
-    // --- Barrel (zeigt -Z)
+    // Barrel (zeigt nach -Z)
     const barrel = new THREE.Mesh(
       new THREE.CylinderGeometry(0.05, 0.06, 1.2, 14),
       new THREE.MeshStandardMaterial({ color: 0x2e3946, metalness: 0.4, roughness: 0.4 })
@@ -46,13 +47,14 @@ export class Turret {
       new THREE.MeshStandardMaterial({ color: 0x1d242d, metalness: 0.6, roughness: 0.3 })
     );
     muzzle.rotation.x = Math.PI * 0.5;
+
     const barrelBlock = new THREE.Group();
     barrel.position.set(0, 0, -0.6);
     muzzle.position.set(0, 0, -1.1);
     barrelBlock.add(barrel, muzzle);
     this.pitchPivot.add(barrelBlock);
 
-    // --- Sight
+    // Sight
     const sight = new THREE.Mesh(
       new THREE.BoxGeometry(0.08, 0.03, 0.18),
       new THREE.MeshStandardMaterial({ color: 0x93b5ff, emissive: 0x0a1220, metalness: 0.2, roughness: 0.5 })
@@ -60,18 +62,14 @@ export class Turret {
     sight.position.set(0, 0.15, -0.12);
     this.pitchPivot.add(sight);
 
-    // --- Handles (Griffe) – leicht zum Spieler versetzt ( +Z )
+    // Griffe: leicht zum Spieler (+Z) und seitlich ±X
     const handleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.16, 16);
     const handleMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
-    this.leftHandle = new THREE.Mesh(handleGeo, handleMat.clone());
+    this.leftHandle  = new THREE.Mesh(handleGeo, handleMat.clone());
     this.rightHandle = new THREE.Mesh(handleGeo, handleMat.clone());
-    // horizontal ausrichten
     this.leftHandle.rotation.z = Math.PI * 0.5;
     this.rightHandle.rotation.z = Math.PI * 0.5;
-    // seitlich ±X, leicht höher, und nach hinten (zum Spieler) +Z
-    const gripY = 0.02;
-    const gripZ = 0.28;
-    const gripX = 0.22;
+    const gripY = 0.02, gripZ = 0.26, gripX = 0.22; // etwas näher zum Spieler
     this.leftHandle.position.set(-gripX, gripY, gripZ);
     this.rightHandle.position.set(+gripX, gripY, gripZ);
     this.pitchPivot.add(this.leftHandle, this.rightHandle);
@@ -87,7 +85,7 @@ export class Turret {
     this._fwd = new THREE.Vector3(0, 0, -1);
     this._tmp = new THREE.Vector3();
 
-    // Ergonomie: Turret etwas kleiner skalieren
+    // Ergonomie
     this.root.scale.setScalar(0.85);
   }
 
@@ -96,26 +94,11 @@ export class Turret {
     scene.add(this.crosshair);
   }
 
-  // Welt-Positionen der Griffe (für Nähe-/Grab-Logik)
-  getHandleWorldPositions() {
-    const lp = new THREE.Vector3();
-    const rp = new THREE.Vector3();
-    this.leftHandle.getWorldPosition(lp);
-    this.rightHandle.getWorldPosition(rp);
-    return { left: lp, right: rp };
-  }
-
-  highlightHandle(which, state) {
-    const m = which === 'left' ? this.leftHandle.material : this.rightHandle.material;
-    m.emissive.setHex(state ? 0x00aaff : 0x000000);
-    m.emissiveIntensity = state ? 0.6 : 0.0;
-  }
-
   #makeCrosshair() {
-    const geo = new THREE.RingGeometry(0.25, 0.3, 32);
-    const mat = new THREE.MeshBasicMaterial({ color: 0x9bd1ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-    const ring = new THREE.Mesh(geo, mat);
-
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.25, 0.3, 32),
+      new THREE.MeshBasicMaterial({ color: 0x9bd1ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+    );
     const lines = new THREE.Group();
     const mkLine = (len, thick) => new THREE.Mesh(
       new THREE.PlaneGeometry(thick, len),
@@ -125,19 +108,28 @@ export class Turret {
     [[0, L/2, 0],[0,-L/2,0],[L/2,0,Math.PI/2],[-L/2,0,Math.PI/2]].forEach(([x,y,rz=0])=>{
       const p = mkLine(L,T); p.position.set(x,y,0); p.rotation.z = rz; lines.add(p);
     });
-
-    const group = new THREE.Group();
-    group.add(ring, lines);
-    group.position.set(0, 1.2, -2);
-    return group;
+    const g = new THREE.Group();
+    g.add(ring, lines);
+    g.position.set(0, 1.2, -2);
+    return g;
   }
 
   setAimDirection(worldDir) {
-    const xzLen = Math.hypot(worldDir.x, worldDir.z);
-    const yaw = Math.atan2(worldDir.x, -worldDir.z);
-    const pitch = Math.atan2(worldDir.y, xzLen);
+    // Inversion nach Config
+    const dir = worldDir.clone();
+    if (CONFIG.turret.invertYaw || CONFIG.turret.invertPitch) {
+      if (CONFIG.turret.invertYaw)   dir.x = -dir.x;
+      if (CONFIG.turret.invertPitch) { dir.y = -dir.y; dir.z = -dir.z; }
+    }
+    const xzLen = Math.hypot(dir.x, dir.z);
+    let yaw   = Math.atan2(dir.x, -dir.z); // -Z ist unsere Vorwärtsrichtung
+    let pitch = Math.atan2(dir.y, xzLen);
+
+    // clamp
+    pitch = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
+
     this._targetYaw = yaw;
-    this._targetPitch = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
+    this._targetPitch = pitch;
   }
 
   update(dt, camera) {
