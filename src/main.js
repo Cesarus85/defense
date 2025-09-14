@@ -20,7 +20,7 @@ function init() {
   renderer.shadowMap.enabled = false;
   document.body.appendChild(renderer.domElement);
 
-  // VR Button – nur minimale optionale Features
+  // VR Button
   document.body.appendChild(
     VRButton.createButton(renderer, { optionalFeatures: ['local-floor'] })
   );
@@ -31,7 +31,7 @@ function init() {
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Himmel (Gradient)
+  // Himmel
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
@@ -42,19 +42,11 @@ function init() {
     },
     vertexShader: `
       varying vec3 vPos;
-      void main(){
-        vPos = position;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
-      }
+      void main(){ vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
     `,
     fragmentShader: `
-      uniform vec3 topColor;
-      uniform vec3 bottomColor;
-      varying vec3 vPos;
-      void main(){
-        float h = normalize(vPos).y * 0.5 + 0.5;
-        gl_FragColor = vec4(mix(bottomColor, topColor, h), 1.0);
-      }
+      uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
+      void main(){ float h = normalize(vPos).y * 0.5 + 0.5; gl_FragColor = vec4(mix(bottomColor, topColor, h), 1.0); }
     `
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
@@ -73,17 +65,19 @@ function init() {
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
-
   const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x2e3b4b, 0x1b2430);
   grid.position.y = 0.01;
   scene.add(grid);
 
-  // Turret
+  // Turret – VOR den Spieler setzen (du stehst dahinter)
   turret = new Turret();
+  turret.root.position.set(0, 0, -1.6); // ~1.6 m vor dir
   turret.addTo(scene);
 
-  // Input
-  input = createInput(renderer, scene, camera);
+  // Input (mit Griff-Referenzen für Greifen & Nähe-Highlight)
+  input = createInput(renderer, scene, camera, {
+    handles: { left: turret.leftHandle, right: turret.rightHandle }
+  });
 
   // Resize
   window.addEventListener('resize', onWindowResize);
@@ -96,9 +90,7 @@ function onWindowResize() {
 }
 
 function startLoop() {
-  // Lokale "last" Variable im Closure → kein Zugriff vor Initialisierung möglich
   let last = performance.now();
-
   renderer.setAnimationLoop((time) => {
     const now = (typeof time === 'number') ? time : performance.now();
     const dt = Math.min(0.05, (now - last) / 1000);
@@ -106,6 +98,7 @@ function startLoop() {
 
     input.update?.();
 
+    // Zwei-Hand- oder Einhand-Zielrichtung
     const aimDir = input.getAimDirection();
     turret.setAimDirection(aimDir);
     turret.update(dt, camera);
