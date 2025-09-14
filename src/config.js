@@ -13,7 +13,7 @@ export const CONFIG = {
   // Input / Grip behavior
   input: {
     grabDist: 0.14,     // ≤ 14 cm zum Greifen
-    breakDist: 1.0,     // Erhöht auf 1m, um Entgleiten zu vermeiden – praktisch "festgesnappt" (war 0.18)
+    breakDist: 1.0,     // Erhöht auf 1m, um Entgleiten zu vermeiden – praktisch "festgesnappt"
     stableDelay: 0.05   // 50 ms bis Steuerung aktiv (schnelleres Arretieren)
   },
 
@@ -45,7 +45,10 @@ export const CONFIG = {
     // Delta-Grip Sensitivität (falls du später auf 'delta' wechselst)
     sensitivityYaw:   1.0,
     sensitivityPitch: 1.0,
-    deadzoneDeg: 0.4
+    deadzoneDeg: 0.4,
+
+    // Neu: Pitch-Offset, um natürliche Handhaltung zu kompensieren (verhindert Initial-Down)
+    pitchOffset: 0.3             // ca. 17° hoch, anpassen nach Bedarf
   },
 
   // Firing / Heat
