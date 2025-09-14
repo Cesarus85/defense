@@ -49,9 +49,9 @@ export const CONFIG = {
     invertPitch: true,
 
     // Zusätzliche Steuerungs-Tweaks (Delta-Modus)
-    sensitivityYaw:   1.0,
-    sensitivityPitch: 1.0,
-    deadzoneDeg: 0.4,
+    sensitivityYaw:   1.5,
+    sensitivityPitch: 1.5,
+    deadzoneDeg: 0.2,
 
     // Von dir genutzt – hier beibehalten
     pitchOffset: 0.3
