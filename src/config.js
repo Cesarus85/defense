@@ -1,5 +1,9 @@
 // /src/config.js
-// Option B: Delta-Mode mit ergonomischer Neutralhaltung (pitchOffset=0.0)
+// Option B (Delta-Mode) + Sichtbarkeit/Erleichterungen:
+// - großes, klares Fadenkreuz
+// - Schuss-Tracer
+// - Aim-Assist (Magnetismus)
+// - größere Gegner/Hitbox
 
 export const CONFIG = {
   targetFPS: 90,
@@ -14,38 +18,50 @@ export const CONFIG = {
 
   // Grip-Handling
   input: {
-    grabDist: 0.14,     // ≤ 14 cm zum Greifen
-    breakDist: 1.0,     // (belassen wie bei dir) Griff löst erst > 1 m
-    stableDelay: 0.05   // 50 ms bis Steuerung aktiv
+    grabDist: 0.14,
+    breakDist: 1.0,      // wie bei dir
+    stableDelay: 0.05
   },
 
+  // Turret & Aiming (Delta-Mode beibehalten)
   turret: {
     height: 1.20,
 
     // Reaktionsgeschwindigkeit
-    yawSpeed: 18.0,     // rad/s
+    yawSpeed: 18.0,
     pitchSpeed: 18.0,
 
-    // Limits
+    // Pitch-Limits
     minPitch: -0.6,
     maxPitch:  1.1,
-    crosshairDistance: 200,
 
-    // Platzierung (auf Boden in main.js)
+    // Sichtbarkeit: reticle näher + stilisiert
+    crosshairDistance: 60, // vorher 200 → viel näher & sichtbarer
+    crosshair: {
+      size: 0.6,            // Außendurchmesser des Rings (m)
+      thickness: 0.10,      // Ringbreite (m)
+      opacity: 0.95,
+      color: 0x9bd1ff,
+      outlineOpacity: 0.35,
+      centerDot: 0.06       // Durchmesser Center-Dot (m)
+    },
+
+    // Platzierung
     offsetZFromPlayer: -0.4,
 
     // Greifen
     requireGrabToAim: true,
     requireBothHandsToAim: true,
 
-    // ✨ Option B: Delta-Mode + ergonomisch
-    controlMode: 'delta',   // beibehalten
-    invertYaw:   true,
-    invertPitch: true,      // Hände hoch → Rohr hoch
+    // Delta-Mode + gewünschte Vorzeichen
+    controlMode: 'delta',
+    invertYaw:   true,     // <- dein Fix (rechts drehen = rechts folgen)
+    invertPitch: true,     // Hände hoch → Rohr hoch
+
     sensitivityYaw:   1.0,
     sensitivityPitch: 1.0,
     deadzoneDeg: 0.4,
-    pitchOffset: 0.0       // wichtig: neutral, kein "nach unten drücken"
+    pitchOffset: 0.0
   },
 
   // Waffe / Heat
@@ -64,10 +80,7 @@ export const CONFIG = {
   },
 
   // Haptik
-  haptics: {
-    shotAmp: 0.6,   shotMs: 22,
-    overheatAmp: 0.9, overheatMs: 70
-  },
+  haptics: { shotAmp: 0.6, shotMs: 22, overheatAmp: 0.9, overheatMs: 70 },
 
   // UI
   ui: {
@@ -79,31 +92,23 @@ export const CONFIG = {
     }
   },
 
-    grips: {
-    // Umschalten: 'front-horizontal' (bisher) oder 'side-vertical' (neu)
-    mode: 'side-vertical',
-
-    front: {
-      spread: 0.22,     // Abstand links/rechts von der Mitte (m)
-      forward: 0.26,    // nach vorn (lokal +Z)
-      height: 0.02,     // leicht über dem Pivot
-      length: 0.16,     // Griff-Länge
-      radius: 0.03,     // Griff-Radius
-      rollDeg: 90       // z-Rotation, 90° = horizontaler Stab
-    },
-
-    side: {
-      spread: 0.28,     // weiter außen am Gehäuse
-      forward: 0.10,    // etwas nach vorn
-      height: 0.02,     // nahe am Pivot
-      length: 0.16,
-      radius: 0.03,
-      tiltInDeg: 12     // Griffe leicht nach innen geneigt (ergonomisch)
-    },
-
-    color: 0x8899aa     // Materialfarbe der Griffe
+  // ✨ Tracer-Optik für Schüsse
+  tracer: {
+    enabled: true,
+    lifeMs: 80,
+    radius: 0.012,        // Zylinderradius (m)
+    color: 0x9bd1ff,
+    opacity: 0.9
   },
 
+  // ✨ Aim-Assist (Magnetismus)
+  aimAssist: {
+    enabled: true,
+    maxDistance: 120,     // nur bis zu dieser Entfernung
+    coneNearDeg: 6.0,     // erlaubter Kegel bei nahen Zielen
+    coneFarDeg: 2.0,      // bei maxDistance
+    snapStrength: 0.6     // 0..1 – wie stark wir Richtung Ziel mischen
+  },
 
   // Gegner / Wellen
   enemies: {
@@ -113,6 +118,14 @@ export const CONFIG = {
     waveGrowth: 1.35,
     spawnInterval: 0.35,
     wavePause: 4.0,
-    grunt: { speed: 3.0, health: 40, reward: 10 }
+
+    // Sichtbarkeit/Hitbox größer, aber gleiche „DNA“
+    grunt: {
+      speed: 3.0,
+      health: 40,
+      reward: 10,
+      scale: 1.6,        // NEU: größer darstellen
+      hitRadius: 0.55    // NEU: größere (unsichtbare) Trefferkugel
+    }
   }
 };
