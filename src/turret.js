@@ -69,7 +69,7 @@ export class Turret {
     this.rightHandle = new THREE.Mesh(handleGeo, handleMat.clone());
     this.leftHandle.rotation.z = Math.PI * 0.5;
     this.rightHandle.rotation.z = Math.PI * 0.5;
-    const gripY = 0.1, gripZ = 0.26, gripX = 0.22; // gripY erhöht auf 0.1 für bessere Ergonomie (war 0.02)
+    const gripY = 0.1, gripZ = 0.26, gripX = 0.22; // gripY auf 0.1 für bessere Höhe
     this.leftHandle.position.set(-gripX, gripY, gripZ);
     this.rightHandle.position.set(+gripX, gripY, gripZ);
     this.pitchPivot.add(this.leftHandle, this.rightHandle);
