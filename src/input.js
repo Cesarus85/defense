@@ -101,6 +101,8 @@ export function createInput(renderer, scene, camera, opts = {}) {
       const hp = c.grabbedHandle === 'left' ? handles.left : handles.right;
       const hpw = hp.getWorldPosition(new THREE.Vector3());
       const gp  = c.grip.getWorldPosition(new THREE.Vector3());
+      // Debugging: Ausgabe der Distanz, um Entgleiten zu analysieren
+      // console.log('Distanz:', gp.distanceTo(hpw));
       if (gp.distanceTo(hpw) > CONFIG.input.breakDist) {
         release(c);
       }
@@ -144,7 +146,8 @@ export function createInput(renderer, scene, camera, opts = {}) {
   return {
     update(dt=0) {
       proximityHighlight();
-      enforceGrabDistance();
+      // enforceGrabDistance(); // Auskommentieren für komplettes "Snappen" ohne Distanzprüfung
+      enforceGrabDistance(); // Aktiv mit breakDist: 1.0 – teste zuerst so
 
       // Stable-Gate: erst wenn beide Griffe halten und Delay verstrichen
       if (CONFIG.turret.requireBothHandsToAim) {
