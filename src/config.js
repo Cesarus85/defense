@@ -15,10 +15,10 @@ export const CONFIG = {
     crosshairDistance: 200,
 
     // Platzierung & Steuerung
-    offsetZFromPlayer: -0.3,      // ~30 cm vor dir
-    requireGrabToAim: true,       // ohne Grip kein Aimen
-    requireBothHandsToAim: true,  // erst mit beiden Händen
-    invertYaw:  false,            // Richtungen NATÜRLICH
-    invertPitch:false
+    offsetZFromPlayer: -0.4,     // ~40 cm vor dir (10 cm weiter weg als zuvor)
+    requireGrabToAim: true,      // ohne Grip kein Aimen
+    requireBothHandsToAim: true, // erst mit beiden Händen
+    invertYaw:  false,           // Links/Rechts natürlich
+    invertPitch:true             // Hoch/Runter invertiert (wie gewünscht)
   }
 };
