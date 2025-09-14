@@ -122,8 +122,12 @@ export function createInput(renderer, scene, camera, opts = {}) {
     }
     fwd.normalize();
     const xz = Math.hypot(fwd.x, fwd.z);
-    const yaw   = Math.atan2(fwd.x, -fwd.z); // -Z = vor
-    const pitch = Math.atan2(fwd.y, xz);
+    let yaw   = Math.atan2(fwd.x, -fwd.z); // -Z = vor
+    let pitch = Math.atan2(fwd.y, xz);
+
+    // Neu: Pitch-Offset anwenden, um Initial-Down zu verhindern (natürliche Handhaltung)
+    pitch += CONFIG.turret.pitchOffset;
+
     return { yaw, pitch };
   }
 
