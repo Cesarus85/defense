@@ -1,3 +1,4 @@
+// /src/turret.js
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 
@@ -29,7 +30,7 @@ export class Turret {
     this.root.add(this.yawPivot);
     this.yawPivot.add(this.pitchPivot);
 
-    // Housing
+    // Housing (Kanonen-Kopf)
     const housing = new THREE.Mesh(
       new THREE.BoxGeometry(0.42, 0.26, 0.42),
       new THREE.MeshStandardMaterial({ color: 0x56697d, metalness: 0.25, roughness: 0.6 })
@@ -62,17 +63,8 @@ export class Turret {
     sight.position.set(0, 0.15, -0.12);
     this.pitchPivot.add(sight);
 
-    // Griffe
-    const handleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.16, 16);
-    const handleMat = new THREE.MeshStandardMaterial({ color: 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
-    this.leftHandle  = new THREE.Mesh(handleGeo, handleMat.clone());
-    this.rightHandle = new THREE.Mesh(handleGeo, handleMat.clone());
-    this.leftHandle.rotation.z = Math.PI * 0.5;
-    this.rightHandle.rotation.z = Math.PI * 0.5;
-    const gripY = 0.1, gripZ = 0.26, gripX = 0.22; // gripY auf 0.1 für bessere Höhe
-    this.leftHandle.position.set(-gripX, gripY, gripZ);
-    this.rightHandle.position.set(+gripX, gripY, gripZ);
-    this.pitchPivot.add(this.leftHandle, this.rightHandle);
+    // === Griffe (umschaltbar) ===
+    this.#buildHandles(housing);
 
     // Crosshair
     this.crosshairRenderEnabled = true;
@@ -81,7 +73,7 @@ export class Turret {
     this._targetYaw = 0;
     this._targetPitch = 0;
 
-    // Ergonomie
+    // Ergonomie-Gesamtscale
     this.root.scale.setScalar(0.85);
   }
 
@@ -110,17 +102,93 @@ export class Turret {
     return g;
   }
 
-  // Alte API bleibt verfügbar
+  // === Neue Handle-Logik (nur Geometrie/Position) ===
+  #buildHandles(housing) {
+    const mat = new THREE.MeshStandardMaterial({ color: CONFIG.grips?.color ?? 0x8899aa, metalness: 0.3, roughness: 0.5, emissive: 0x000000 });
+
+    // Hilfsfunktion: kleiner Montage-Arm (optisch)
+    const makeBracket = (w=0.06,h=0.04,d=0.10) =>
+      new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+        new THREE.MeshStandardMaterial({ color: 0x5a6b7d, metalness: 0.25, roughness: 0.6 }));
+
+    const mode = CONFIG.grips?.mode ?? 'front-horizontal';
+
+    if (mode === 'side-vertical') {
+      const g = CONFIG.grips.side;
+      const r = g.radius ?? 0.03;
+      const len = g.length ?? 0.16;
+      const spread = g.spread ?? 0.28;
+      const forward = g.forward ?? 0.10;
+      const height = g.height ?? 0.02;
+      const tiltIn = THREE.MathUtils.degToRad(g.tiltInDeg ?? 12);
+
+      // Vertikale „Pistol“-Griffe: Achse = Y
+      const geo = new THREE.CylinderGeometry(r, r, len, 18);
+      this.leftHandle  = new THREE.Mesh(geo, mat.clone());
+      this.rightHandle = new THREE.Mesh(geo, mat.clone());
+
+      // Positionen relativ zum Pitch-Pivot (rotieren bei Pitch mit)
+      this.leftHandle.position.set(-spread, height, -forward);
+      this.rightHandle.position.set(+spread, height, -forward);
+
+      // Leichte Schrägstellung nach innen (um X drehen → kippt Richtung Spieler)
+      this.leftHandle.rotation.x =  tiltIn;
+      this.rightHandle.rotation.x = tiltIn;
+
+      // Kleine Montagearme, die die Griffe am Housing verbinden
+      const lBracket = makeBracket(0.04, 0.04, forward + 0.06);
+      const rBracket = lBracket.clone();
+
+      lBracket.position.set(-spread, height, -(forward*0.5));
+      rBracket.position.set(+spread, height, -(forward*0.5));
+
+      this.pitchPivot.add(this.leftHandle, this.rightHandle, lBracket, rBracket);
+
+    } else {
+      // Default/Bestand: Front-Horizontal (wie bisher)
+      const g = CONFIG.grips.front;
+      const r = g.radius ?? 0.03;
+      const len = g.length ?? 0.16;
+      const spread = g.spread ?? 0.22;
+      const forward = g.forward ?? 0.26;
+      const height = g.height ?? 0.02;
+      const roll = THREE.MathUtils.degToRad(g.rollDeg ?? 90);
+
+      const geo = new THREE.CylinderGeometry(r, r, len, 16);
+      this.leftHandle  = new THREE.Mesh(geo, mat.clone());
+      this.rightHandle = new THREE.Mesh(geo, mat.clone());
+
+      // Horizontaler Stab: um z-Achse rollen
+      this.leftHandle.rotation.z = roll;
+      this.rightHandle.rotation.z = roll;
+
+      this.leftHandle.position.set(-spread, height, forward);
+      this.rightHandle.position.set(+spread, height, forward);
+
+      // Montagearme
+      const lBracket = makeBracket(0.05, 0.04, forward + 0.04);
+      const rBracket = lBracket.clone();
+      lBracket.position.set(-spread, height, forward * 0.5);
+      rBracket.position.set(+spread, height, forward * 0.5);
+
+      this.pitchPivot.add(this.leftHandle, this.rightHandle, lBracket, rBracket);
+    }
+  }
+
+  // Alte API bleibt (Steuerung unverändert)
   setAimDirection(worldDir) {
     const xzLen = Math.hypot(worldDir.x, worldDir.z);
     let yaw   = Math.atan2(worldDir.x, -worldDir.z);
     let pitch = Math.atan2(worldDir.y, xzLen);
+
+    // Invert-Flags wirken nur auf Zielwinkel (keine Logikänderung)
+    if (CONFIG.turret.invertYaw)   yaw = -yaw;
+    if (CONFIG.turret.invertPitch) pitch = -pitch;
+
     this.setTargetAngles(yaw, pitch);
   }
 
-  // ✅ Neue API: Zielwinkel direkt setzen (vor Clamp)
   setTargetAngles(yaw, pitch) {
-    // Clamp
     const p = THREE.MathUtils.clamp(pitch, CONFIG.turret.minPitch, CONFIG.turret.maxPitch);
     this._targetYaw = yaw;
     this._targetPitch = p;
@@ -129,10 +197,8 @@ export class Turret {
   update(dt, camera) {
     const yspd = CONFIG.turret.yawSpeed;
     const pspd = CONFIG.turret.pitchSpeed;
-    // Alte: this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   1 - Math.exp(-yspd * dt));
-    // Neu: Stärkeres Lerp für weniger Behaglichkeit
-    this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   Math.min(1, yspd * dt * 2));  // *2 für aggressiver
-    this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, Math.min(1, pspd * dt * 2));
+    this.yawPivot.rotation.y   = lerpAngle(this.yawPivot.rotation.y,   this._targetYaw,   1 - Math.exp(-yspd * dt));
+    this.pitchPivot.rotation.x = lerpAngle(this.pitchPivot.rotation.x, this._targetPitch, 1 - Math.exp(-pspd * dt));
 
     if (this.crosshairRenderEnabled) {
       const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(this.pitchPivot.getWorldQuaternion(new THREE.Quaternion()));
