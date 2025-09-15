@@ -1,5 +1,6 @@
 // /src/enemies.js
 import * as THREE from 'three';
+import { CONFIG } from './config.js';
 
 export class Enemy {
   constructor(type, opts) {
@@ -43,7 +44,19 @@ export class Enemy {
     );
     if (this.ground) hit.position.y = this.radius;
 
-    this.group.add(body, eye, hit);
+    // Head hit zone (invisible sphere), tagged as 'head'
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(Math.max(this.radius*0.45, 0.12), 12, 8),
+      new THREE.MeshBasicMaterial({ visible: false })
+    );
+    head.position.set(0, body.position.y + 0.36, 0.08);
+
+    // Tag zones
+    body.userData.zone = 'core';
+    hit.userData.zone = 'core';
+    head.userData.zone = 'head';
+
+    this.group.add(body, eye, hit, head);
 
     this.dead = false;
     this.reached = false;
@@ -54,9 +67,11 @@ export class Enemy {
     this.scene.add(this.group);
   }
 
-  takeDamage(amount = 0) {
+  takeDamage(amount = 0, zone = 'core') {
     if (this.dead) return;
-    this.health -= amount;
+    const mul = (CONFIG?.zones?.[zone]?.damageMul ?? 1.0);
+    this.lastHitZone = zone;
+    this.health -= amount * mul;
     if (this.health <= 0) {
       this.dead = true;
       if (this.hitFx) {
@@ -67,7 +82,7 @@ export class Enemy {
         }
       }
       this.scene.remove(this.group);
-      this.onDeath({ enemy: this, reward: this.reward });
+      this.onDeath({ enemy: this, reward: this.reward, zone: (this.lastHitZone||'core') });
     }
   }
 
@@ -160,9 +175,9 @@ export class EnemyManager {
       hitRadius: this.cfg.grunt.hitRadius
     });
 
-    enemy.onDeath = ({ reward }) => {
+    enemy.onDeath = ({ reward, zone }) => {
       this.alive = Math.max(0, this.alive - 1);
-      this.onScore({ type: 'kill', reward, wave: this.wave, alive: this.alive });
+      this.onScore({ type: 'kill', reward, zone, wave: this.wave, alive: this.alive });
     };
 
     this.enemies.push(enemy);

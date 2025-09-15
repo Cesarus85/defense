@@ -9,7 +9,7 @@ import { createInput } from './input.js';
 import { Turret } from './turret.js';
 
 import { AudioManager } from './audio.js';
-import { MuzzleFlash, HitSparks, TracerPool, GameOverBanner3D } from './fx.js';
+import { MuzzleFlash, HitSparks, TracerPool, GameOverBanner3D, Killfeed3D } from './fx.js';
 import { HeatBar3D } from './ui.js';
 import { GunSystem } from './gun.js';
 import { EnemyManager } from './enemies.js';
@@ -33,6 +33,8 @@ const STEP2 = {
 let enemyMgr = null;
 let score = 0;
 let scoreEl = null;
+let combo = (CONFIG.score?.baseCombo ?? 1.0);
+let comboTimer = 0;
 
 let baseHP = 100;
 let baseInvuln = 0;
@@ -141,6 +143,7 @@ function initStep2Systems() {
   STEP2.tracers   = new TracerPool(scene);
   STEP2.gun       = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI, STEP2.tracers);
   STEP2.gameOver3D = new GameOverBanner3D(scene);
+  STEP2.killfeed = new Killfeed3D(scene);
 }
 
 function initScoreUI() {
@@ -237,7 +240,9 @@ function initGameOverUI() {
 function updateScoreUI({ wave, alive } = {}) {
   const w = (wave ?? enemyMgr?.wave ?? 1);
   const a = (alive ?? enemyMgr?.alive ?? 0);
-  scoreEl.textContent = `Score: ${score}  |  Wave: ${w}  |  Enemies: ${a}`;
+  const cmb = combo.toFixed(2);
+  const tleft = comboTimer>0? `  |  Combo: x${cmb}` : '';
+  scoreEl.textContent = `Score: ${score}  |  Wave: ${w}  |  Enemies: ${a}${tleft}`;
 }
 
 function updateBaseUI() {
@@ -246,6 +251,32 @@ function updateBaseUI() {
 }
 
 function initEnemies() {
+
+// === STEP 5: Combo/Scoring Helpers ===
+function onKillEvent({ reward=0, zone='core', wave=1, alive=0 }) {
+  // Combo handling
+  const sc = CONFIG.score || {};
+  const step = zone==='head' ? (sc.comboStepHead ?? 0.5) : (sc.comboStep ?? 0.25);
+  const prevCombo = combo;
+  combo = Math.min(sc.maxCombo ?? 5.0, (combo || (sc.baseCombo??1.0)) + step);
+  comboTimer = sc.comboTime ?? 3.0;
+
+  // Sound on combo up
+  if (combo > prevCombo) STEP2.audio?.playComboUp?.();
+
+  // Zone score multiplier
+  const zmul = (CONFIG.zones?.[zone]?.scoreMul ?? 1.0);
+  const points = Math.round((reward * zmul) * (combo || 1.0));
+
+  score += points;
+
+  // Killfeed
+  const label = zone==='head' ? 'HEADSHOT' : 'KILL';
+  STEP2.killfeed?.push(`+${points}  ×${(combo||1).toFixed(2)}  ${label}`);
+
+  updateScoreUI({ alive });
+}
+
   enemyMgr = new EnemyManager(
     scene,
     turret,
@@ -253,7 +284,7 @@ function initEnemies() {
     STEP2.hitFx,
     // Score/Wave Callback
     (e) => {
-      if (e.type === 'kill') { score += e.reward || 0; updateScoreUI({ alive: e.alive }); }
+      if (e.type === 'kill') { onKillEvent(e); }); }
       if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
     },
     // Base-Hit Callback
@@ -294,6 +325,8 @@ function gameOver() {
 function restartGame() {
   // Reset
   score = 0;
+  combo = (CONFIG.score?.baseCombo ?? 1.0);
+  comboTimer = 0;
   baseHP = CONFIG.base?.maxHP ?? 100;
   baseInvuln = 0;
   isGameOver = false;
@@ -307,7 +340,7 @@ function restartGame() {
     CONFIG.enemies,
     STEP2.hitFx,
     (e) => {
-      if (e.type === 'kill') { score += e.reward || 0; updateScoreUI({ alive: e.alive }); }
+      if (e.type === 'kill') { onKillEvent(e); }); }
       if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
     },
     (e) => { onBaseHit(e.pos); }
@@ -394,6 +427,11 @@ function startLoop() {
     STEP2.heatUI.update(camera);
     STEP2.tracers?.update(dt);
     STEP2.gameOver3D?.update(getCurrentCamera(), dt);
+    STEP2.killfeed?.update(getCurrentCamera(), dt);
+
+    // Combo timer decay
+    if (comboTimer > 0) { comboTimer -= dt; if (comboTimer <= 0) { combo = (CONFIG.score?.baseCombo ?? 1.0); } }
+
 
     if (enemyMgr) {
       enemyMgr.update(dt);

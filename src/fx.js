@@ -287,3 +287,88 @@ function makeCircleTexture(size = 128, hex = 0xffcc88) {
   tx.colorSpace = THREE.SRGBColorSpace;
   return tx;
 }
+
+
+// == 3D Killfeed (STEP 5) =======================================
+export class Killfeed3D {
+  constructor(scene) {
+    this.scene = scene;
+    this.items = []; // {mesh, life, maxLife}
+    this.offset = new THREE.Vector3(-0.6, -0.6, -1.5); // relativ zur Kamera (links unten)
+  }
+
+  _makeTextPlane(text) {
+    const pad = 12;
+    const font = 'bold 28px system-ui, sans-serif';
+    const tmp = document.createElement('canvas');
+    const ctx = tmp.getContext('2d');
+    ctx.font = font;
+    const tw = Math.ceil(ctx.measureText(text).width) + pad*2;
+    const th = 44;
+
+    const c = document.createElement('canvas'); c.width = tw; c.height = th;
+    const g = c.getContext('2d');
+    // BG
+    g.fillStyle = 'rgba(10,16,24,0.78)';
+    g.fillRect(0,0,tw,th);
+    g.strokeStyle = 'rgba(160,200,255,0.25)';
+    g.strokeRect(0.5,0.5,tw-1,th-1);
+    // Text
+    g.font = font;
+    g.fillStyle = '#d9f0ff';
+    g.textBaseline = 'middle';
+    g.fillText(text, pad, th/2);
+
+    const tx = new THREE.CanvasTexture(c);
+    tx.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshBasicMaterial({ map: tx, transparent: true, depthWrite: false });
+    const geo = new THREE.PlaneGeometry(tw/220, th/220);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.ignoreHit = true;
+    mesh.visible = true;
+    return mesh;
+  }
+
+  push(text, life=1.8) {
+    const mesh = this._makeTextPlane(text);
+    this.scene.add(mesh);
+    this.items.unshift({ mesh, life, maxLife: life });
+    // Max 5 items
+    if (this.items.length > 5) {
+      const old = this.items.pop();
+      this.scene.remove(old.mesh);
+    }
+  }
+
+  update(camera, dt=0.016) {
+    if (!camera) return;
+    // Position items relativ zur Kamera und staple sie nach oben
+    const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+    const camQuat = new THREE.Quaternion(); camera.getWorldQuaternion(camQuat);
+    const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat);
+    const right = new THREE.Vector3(1,0,0).applyQuaternion(camQuat);
+    const up = new THREE.Vector3(0,1,0).applyQuaternion(camQuat);
+
+    for (let i=0;i<this.items.length;i++) {
+      const it = this.items[i];
+      const base = camPos.clone()
+        .addScaledVector(fwd, Math.abs(this.offset.z))
+        .addScaledVector(right, this.offset.x)
+        .addScaledVector(up, this.offset.y + i*0.18);
+      it.mesh.position.copy(base);
+      it.mesh.quaternion.copy(camQuat);
+
+      // Fade
+      it.life -= dt;
+      const a = THREE.MathUtils.clamp(it.life / it.maxLife, 0, 1);
+      it.mesh.material.opacity = a;
+    }
+    // Remove dead
+    for (let i=this.items.length-1;i>=0;i--) {
+      if (this.items[i].life<=0) {
+        this.scene.remove(this.items[i].mesh);
+        this.items.splice(i,1);
+      }
+    }
+  }
+}

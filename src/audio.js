@@ -46,4 +46,26 @@ export class AudioManager {
     const g = this.ctx.createGain(); g.gain.setValueAtTime(0.05, t); g.gain.linearRampToValueAtTime(0.0, t + 0.3);
     src.connect(g).connect(this.ctx.destination); src.start(t);
   }
+
+
+  // Headshot stinger (kurzer hoher Ping)
+  playHeadshot() {
+    this.ensure(); if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+    osc.type = 'triangle'; osc.frequency.setValueAtTime(880, t); // A5
+    gain.gain.setValueAtTime(0.0, t); gain.gain.linearRampToValueAtTime(0.12, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+    osc.connect(gain).connect(this.ctx.destination); osc.start(t); osc.stop(t + 0.26);
+  }
+
+  // Combo-Up blip (steigender Zweiton)
+  playComboUp() {
+    this.ensure(); if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const o1 = this.ctx.createOscillator(); const g1 = this.ctx.createGain();
+    o1.type='sine'; o1.frequency.setValueAtTime(520, t); o1.frequency.linearRampToValueAtTime(660, t+0.12);
+    g1.gain.setValueAtTime(0.0, t); g1.gain.linearRampToValueAtTime(0.08, t+0.02); g1.gain.exponentialRampToValueAtTime(0.0001, t+0.18);
+    o1.connect(g1).connect(this.ctx.destination); o1.start(t); o1.stop(t+0.18);
+  }
 }
