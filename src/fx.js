@@ -1,5 +1,5 @@
 // /src/fx.js
-// FX: Mündungsfeuer, Einschlagsfunken, Tracer-Pool
+// FX: Mündungsfeuer, Einschlagsfunken, Tracer und 3D-GameOver-Banner
 
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
@@ -8,20 +8,29 @@ export class MuzzleFlash {
   constructor(turret, offset = 1.1) {
     this.turret = turret;
     this.life = 0;
-    const tex = makeCircleTexture();
+
+    const tex = makeCircleTexture(); // weiches Leuchten
     const mat = new THREE.SpriteMaterial({
-      map: tex, transparent: true, depthWrite: false,
+      map: tex,
+      transparent: true,
+      depthWrite: false,
       blending: THREE.AdditiveBlending
     });
     this.sprite = new THREE.Sprite(mat);
     this.sprite.scale.set(0.22, 0.22, 0.22);
     this.sprite.userData.ignoreHit = true; // nicht hittbar
     this.offset = offset;
+
     turret.pitchPivot.add(this.sprite);
     this.sprite.position.set(0, 0, -this.offset);
     this.sprite.visible = false;
   }
-  trigger(ms = 40) { this.life = ms / 1000; this.sprite.visible = true; }
+
+  trigger(ms = 40) {
+    this.life = ms / 1000;
+    this.sprite.visible = true;
+  }
+
   update(dt, camera) {
     if (this.life > 0) {
       this.life -= dt;
@@ -38,6 +47,7 @@ export class HitSparks {
     this.pool = [];
     this.active = [];
   }
+
   spawnAt(point, normal) {
     const s = this.pool.pop() || makeSpark();
     s.position.copy(point);
@@ -47,13 +57,16 @@ export class HitSparks {
     this.scene.add(s);
     this.active.push(s);
   }
+
   update(dt) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const s = this.active[i];
       s.userData.life -= dt;
       s.material.opacity = Math.max(0, s.userData.life * 8);
       if (s.userData.life <= 0) {
-        this.scene.remove(s); this.active.splice(i, 1); this.pool.push(s);
+        this.scene.remove(s);
+        this.active.splice(i, 1);
+        this.pool.push(s);
       }
     }
   }
@@ -65,20 +78,24 @@ export class TracerPool {
     this.pool = [];
     this.active = [];
   }
+
   spawn(start, end) {
     const len = start.distanceTo(end);
     if (len <= 0.001) return;
+
     const dir = end.clone().sub(start).normalize();
 
     const m = this.pool.pop() || this._makeTracerMesh();
     m.scale.set(1, len, 1); // Geometrie entlang Y
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
     m.position.copy(start).addScaledVector(dir, len * 0.5);
     m.material.opacity = (CONFIG.tracer.opacity ?? 0.9);
     m.userData.life = (CONFIG.tracer.lifeMs ?? 80) / 1000;
+
     this.scene.add(m);
     this.active.push(m);
   }
+
   update(dt) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const m = this.active[i];
@@ -86,11 +103,12 @@ export class TracerPool {
       m.material.opacity = Math.max(0, m.userData.life * 6);
       if (m.userData.life <= 0) {
         this.scene.remove(m);
-        this.active.splice(i,1);
+        this.active.splice(i, 1);
         this.pool.push(m);
       }
     }
   }
+
   _makeTracerMesh() {
     const r = CONFIG.tracer.radius ?? 0.012;
     const geo = new THREE.CylinderGeometry(r, r, 1, 8, 1, true);
@@ -107,19 +125,21 @@ export class TracerPool {
   }
 }
 
+// == 3D GameOver-Banner =========================================
 export class GameOverBanner3D {
   constructor(scene) {
     this.scene = scene;
     const cfg = (CONFIG.ui3d && CONFIG.ui3d.gameOver) || {};
-    this.distance = cfg.distance ?? 2.5;    // Meter vor der Kamera
-    this.width    = cfg.width ?? 2.0;       // Breite des Banners (m)
+    this.distance = cfg.distance ?? 2.5; // Meter vor der Kamera
+    this.width    = cfg.width ?? 2.0;    // Breite (m)
     this.bg       = cfg.bg ?? 'rgba(10,16,24,0.85)';
     this.titleCol = cfg.titleColor ?? '#ff4d5a';
     this.subCol   = cfg.subColor ?? '#cfe7ff';
 
     // Canvas → Texture
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 1024; this.canvas.height = 384;
+    this.canvas.width = 1024;
+    this.canvas.height = 384;
     this.ctx = this.canvas.getContext('2d');
     this._draw();
 
@@ -135,12 +155,12 @@ export class GameOverBanner3D {
       map: tex,
       transparent: true,
       depthWrite: false,
-      depthTest: false,             // immer sichtbar (auch wenn etwas davor ist)
+      depthTest: false // immer sichtbar
     });
 
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.visible = false;
-    this.mesh.renderOrder = 999;    // spät zeichnen
+    this.mesh.renderOrder = 999;
     this.scene.add(this.mesh);
 
     // Simple Show/Hide-Animation
@@ -151,13 +171,13 @@ export class GameOverBanner3D {
   }
 
   _roundRect(ctx, x, y, w, h, r) {
-    const rr = Math.min(r, w*0.5, h*0.5);
+    const rr = Math.min(r, w * 0.5, h * 0.5);
     ctx.beginPath();
-    ctx.moveTo(x+rr, y);
-    ctx.arcTo(x+w, y,   x+w, y+h, rr);
-    ctx.arcTo(x+w, y+h, x,   y+h, rr);
-    ctx.arcTo(x,   y+h, x,   y,   rr);
-    ctx.arcTo(x,   y,   x+w, y,   rr);
+    ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr);
+    ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr);
+    ctx.arcTo(x, y, x + w, y, rr);
     ctx.closePath();
   }
 
@@ -165,29 +185,29 @@ export class GameOverBanner3D {
     const { ctx, canvas } = this;
     const W = canvas.width, H = canvas.height;
 
-    ctx.clearRect(0,0,W,H);
+    ctx.clearRect(0, 0, W, H);
 
     // Hintergrund
     ctx.fillStyle = this.bg;
-    this._roundRect(ctx, 24, 24, W-48, H-48, 28);
+    this._roundRect(ctx, 24, 24, W - 48, H - 48, 28);
     ctx.fill();
 
-    // Titel „GAME OVER“
+    // Titel
     ctx.fillStyle = this.titleCol;
     ctx.font = 'bold 140px system-ui, -apple-system, Segoe UI, Roboto, Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = 12;
-    ctx.fillText('GAME OVER', W/2, H/2 - 20);
+    ctx.fillText('GAME OVER', W / 2, H / 2 - 20);
 
     // Subtext
     ctx.shadowBlur = 0;
     ctx.fillStyle = this.subCol;
     ctx.font = '500 40px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-    ctx.fillText('Drücke „Restart“ im Overlay oder rufe das Menü auf', W/2, H/2 + 72);
+    ctx.fillText('Drücke „Restart“ im Overlay oder rufe das Menü auf', W / 2, H / 2 + 72);
 
-    this.tex?.needsUpdate = true;
+    if (this.tex) this.tex.needsUpdate = true;
   }
 
   show(camera) {
@@ -207,28 +227,27 @@ export class GameOverBanner3D {
     if (!camera) return;
     const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
     const camQuat = new THREE.Quaternion(); camera.getWorldQuaternion(camQuat);
-    const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat).normalize();
-    const up  = new THREE.Vector3(0,1,0).applyQuaternion(camQuat).normalize();
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat).normalize();
+    const up  = new THREE.Vector3(0, 1, 0).applyQuaternion(camQuat).normalize();
 
-    // leicht oberhalb der Blicklinie
     const pos = camPos.clone().addScaledVector(fwd, this.distance).addScaledVector(up, 0.15);
     this.mesh.position.copy(pos);
     this.mesh.quaternion.copy(camQuat); // Billboard
   }
 
-  update(camera, dt=0.016) {
+  update(camera, dt = 0.016) {
     if (!this.mesh.visible) return;
 
-    // sanfte Follow-Position & Look
+    // Follow & Billboard
     this._reposition(camera);
 
-    // Fade/Scale-In, wenn sichtbar
+    // Fade/Scale-In
     if (this.visible) {
-      this.alpha = Math.min(1, this.alpha + dt*3);
-      this.scale = Math.min(1, this.scale + dt*2);
+      this.alpha = Math.min(1, this.alpha + dt * 3);
+      this.scale = Math.min(1, this.scale + dt * 2);
     } else {
-      this.alpha = Math.max(0, this.alpha - dt*3);
-      this.scale = Math.max(0.85, this.scale - dt*2);
+      this.alpha = Math.max(0, this.alpha - dt * 3);
+      this.scale = Math.max(0.85, this.scale - dt * 2);
       if (this.alpha <= 0) this.mesh.visible = false;
     }
 
@@ -237,11 +256,14 @@ export class GameOverBanner3D {
   }
 }
 
-// helpers
+// ===== helpers =================================================
+
 function makeSpark() {
   const tex = makeCircleTexture(128, 0xffddaa);
   const mat = new THREE.SpriteMaterial({
-    map: tex, transparent: true, depthWrite: false,
+    map: tex,
+    transparent: true,
+    depthWrite: false,
     blending: THREE.AdditiveBlending
   });
   const spr = new THREE.Sprite(mat);
@@ -253,10 +275,15 @@ function makeSpark() {
 function makeCircleTexture(size = 128, hex = 0xffcc88) {
   const c = document.createElement('canvas'); c.width = c.height = size;
   const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
-  const col = (h,a)=>`rgba(${(h>>16)&255},${(h>>8)&255},${h&255},${a})`;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  const col = (h, a) => `rgba(${(h >> 16) & 255},${(h >> 8) & 255},${h & 255},${a})`;
   g.addColorStop(0, col(hex, 1));
   g.addColorStop(1, col(0x000000, 0));
-  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(size/2, size/2, size/2, 0, Math.PI*2); ctx.fill();
-  const tx = new THREE.CanvasTexture(c); tx.colorSpace = THREE.SRGBColorSpace; return tx;
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  const tx = new THREE.CanvasTexture(c);
+  tx.colorSpace = THREE.SRGBColorSpace;
+  return tx;
 }
