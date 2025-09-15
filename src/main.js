@@ -89,7 +89,7 @@ function init() {
   // Lights
   scene.add(new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity));
   const dir = new THREE.DirectionalLight(CONFIG.lights.dir.color, CONFIG.lights.dir.intensity);
-  dir.position.set(...CONFIG.lights.dir.position);
+  dir.position.set(CONFIG.lights.dir.position);
   scene.add(dir);
 
   // Ground + Grid
