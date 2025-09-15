@@ -107,6 +107,136 @@ export class TracerPool {
   }
 }
 
+export class GameOverBanner3D {
+  constructor(scene) {
+    this.scene = scene;
+    const cfg = (CONFIG.ui3d && CONFIG.ui3d.gameOver) || {};
+    this.distance = cfg.distance ?? 2.5;    // Meter vor der Kamera
+    this.width    = cfg.width ?? 2.0;       // Breite des Banners (m)
+    this.bg       = cfg.bg ?? 'rgba(10,16,24,0.85)';
+    this.titleCol = cfg.titleColor ?? '#ff4d5a';
+    this.subCol   = cfg.subColor ?? '#cfe7ff';
+
+    // Canvas → Texture
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = 1024; this.canvas.height = 384;
+    this.ctx = this.canvas.getContext('2d');
+    this._draw();
+
+    const tex = new THREE.CanvasTexture(this.canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex = tex;
+
+    const aspect = this.canvas.height / this.canvas.width;
+    const height = this.width * aspect;
+
+    const geo = new THREE.PlaneGeometry(this.width, height);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,             // immer sichtbar (auch wenn etwas davor ist)
+    });
+
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.mesh.visible = false;
+    this.mesh.renderOrder = 999;    // spät zeichnen
+    this.scene.add(this.mesh);
+
+    // Simple Show/Hide-Animation
+    this.visible = false;
+    this.alpha = 0;
+    this.scale = 0.85;
+    this.mesh.scale.setScalar(this.scale);
+  }
+
+  _roundRect(ctx, x, y, w, h, r) {
+    const rr = Math.min(r, w*0.5, h*0.5);
+    ctx.beginPath();
+    ctx.moveTo(x+rr, y);
+    ctx.arcTo(x+w, y,   x+w, y+h, rr);
+    ctx.arcTo(x+w, y+h, x,   y+h, rr);
+    ctx.arcTo(x,   y+h, x,   y,   rr);
+    ctx.arcTo(x,   y,   x+w, y,   rr);
+    ctx.closePath();
+  }
+
+  _draw() {
+    const { ctx, canvas } = this;
+    const W = canvas.width, H = canvas.height;
+
+    ctx.clearRect(0,0,W,H);
+
+    // Hintergrund
+    ctx.fillStyle = this.bg;
+    this._roundRect(ctx, 24, 24, W-48, H-48, 28);
+    ctx.fill();
+
+    // Titel „GAME OVER“
+    ctx.fillStyle = this.titleCol;
+    ctx.font = 'bold 140px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 12;
+    ctx.fillText('GAME OVER', W/2, H/2 - 20);
+
+    // Subtext
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = this.subCol;
+    ctx.font = '500 40px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.fillText('Drücke „Restart“ im Overlay oder rufe das Menü auf', W/2, H/2 + 72);
+
+    this.tex?.needsUpdate = true;
+  }
+
+  show(camera) {
+    this.visible = true;
+    this.alpha = 0;
+    this.scale = 0.85;
+    this.mesh.visible = true;
+    this._reposition(camera);
+  }
+
+  hide() {
+    this.visible = false;
+    this.mesh.visible = false;
+  }
+
+  _reposition(camera) {
+    if (!camera) return;
+    const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
+    const camQuat = new THREE.Quaternion(); camera.getWorldQuaternion(camQuat);
+    const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat).normalize();
+    const up  = new THREE.Vector3(0,1,0).applyQuaternion(camQuat).normalize();
+
+    // leicht oberhalb der Blicklinie
+    const pos = camPos.clone().addScaledVector(fwd, this.distance).addScaledVector(up, 0.15);
+    this.mesh.position.copy(pos);
+    this.mesh.quaternion.copy(camQuat); // Billboard
+  }
+
+  update(camera, dt=0.016) {
+    if (!this.mesh.visible) return;
+
+    // sanfte Follow-Position & Look
+    this._reposition(camera);
+
+    // Fade/Scale-In, wenn sichtbar
+    if (this.visible) {
+      this.alpha = Math.min(1, this.alpha + dt*3);
+      this.scale = Math.min(1, this.scale + dt*2);
+    } else {
+      this.alpha = Math.max(0, this.alpha - dt*3);
+      this.scale = Math.max(0.85, this.scale - dt*2);
+      if (this.alpha <= 0) this.mesh.visible = false;
+    }
+
+    this.mesh.material.opacity = this.alpha;
+    this.mesh.scale.setScalar(this.scale);
+  }
+}
+
 // helpers
 function makeSpark() {
   const tex = makeCircleTexture(128, 0xffddaa);
