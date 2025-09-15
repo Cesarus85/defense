@@ -161,21 +161,19 @@ export const CONFIG = {
       scale: 1.6,        // NEU: größer darstellen
       hitRadius: 0.55    // NEU: größere (unsichtbare) Trefferkugel
     }
-  
+  },
 
-  // --- Scoring & Combo (STEP 5) ---
+  // --- STEP 5: Score/Combo + Trefferzonen ---
   score: {
-    baseCombo: 1.0,
-    maxCombo: 5.0,
-    comboStep: 0.25,         // +0.25 pro Kill
-    comboStepHead: 0.5,      // +0.5 bei Headshot
-    comboTime: 3.0           // Sekunden bis Combo verfällt (wird bei Kill zurückgesetzt/verlängert)
+    base: 1.0,
+    max: 5.0,
+    comboStep: 0.25,
+    headshotBonus: 0.5,
+    comboTime: 3.0
   },
 
-  // --- Trefferzonen (STEP 5) ---
   zones: {
-    core: { damageMul: 1.0, scoreMul: 1.0 },
-    head: { damageMul: 2.0, scoreMul: 2.0 }
-  },
-}
+    head: { damageMul: 2.0, scoreMul: 2.0 },
+    core: { damageMul: 1.0, scoreMul: 1.0 }
+  }
 };
