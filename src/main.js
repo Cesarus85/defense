@@ -1,5 +1,6 @@
 // /src/main.js
-// Delta bevorzugt (Option B), ansonsten absoluter Fallback. Steuerungslogik bleibt wie vereinbart.
+// Fügt Base-HP, Schaden bei Ankunft, Game-Over & Restart hinzu.
+// Keine Änderungen an deiner Turret-/Input-Steuerung.
 
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
@@ -17,13 +18,20 @@ let scene, camera, renderer;
 let input, turret;
 let needPlaceFromHMD = false;
 
-// Step2 Container (verhindert TDZ-Probleme)
+// Step2 Container
 const STEP2 = { audio: null, muzzleFx: null, hitFx: null, heatUI: null, gun: null, tracers: null };
 
-// Step3
+// Enemies / Score / Base
 let enemyMgr = null;
 let score = 0;
 let scoreEl = null;
+
+let baseHP = 100;
+let baseInvuln = 0;
+let baseEl = null;
+
+let isGameOver = false;
+let gameOverEl = null;
 
 // Delta-Baseline (nur für 'delta')
 let baseTurretYaw = 0, baseTurretPitch = 0;
@@ -50,7 +58,7 @@ function init() {
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Sky (simple gradient)
+  // Sky
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
@@ -59,14 +67,9 @@ function init() {
       topColor:    { value: new THREE.Color(CONFIG.sky.topColor) },
       bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) }
     },
-    vertexShader: `
-      varying vec3 vPos;
-      void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
-    `,
-    fragmentShader: `
-      uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
-      void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }
-    `
+    vertexShader: `varying vec3 vPos; void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader:`uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
+                    void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }`
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
@@ -102,12 +105,16 @@ function init() {
   // Desktop: initial platzieren
   placeTurretFromCamera(getCurrentCamera());
 
-  // Step 2 Systeme
+  // Step2 Systeme
   initStep2Systems();
   window.addEventListener('pointerdown', () => STEP2.audio?.ensure(), { once: true });
 
-  // Step 3 Systeme
+  // UI Overlays
   initScoreUI();
+  initBaseUI();
+  initGameOverUI();
+
+  // Enemies
   initEnemies();
 
   window.addEventListener('resize', onWindowResize);
@@ -139,10 +146,88 @@ function initScoreUI() {
   updateScoreUI({ wave: 1, alive: 0 });
 }
 
+function initBaseUI() {
+  baseHP = CONFIG.base?.maxHP ?? 100;
+
+  baseEl = document.createElement('div');
+  baseEl.style.position = 'fixed';
+  baseEl.style.top = '12px';
+  baseEl.style.left = '14px';
+  baseEl.style.padding = '8px 12px';
+  baseEl.style.background = 'rgba(20,14,14,0.55)';
+  baseEl.style.border = '1px solid rgba(255,170,170,0.25)';
+  baseEl.style.borderRadius = '10px';
+  baseEl.style.fontFamily = 'system-ui, sans-serif';
+  baseEl.style.color = '#ffd6d6';
+  baseEl.style.fontSize = '14px';
+  baseEl.style.zIndex = '9999';
+  document.body.appendChild(baseEl);
+  updateBaseUI();
+}
+
+function initGameOverUI() {
+  gameOverEl = document.createElement('div');
+  Object.assign(gameOverEl.style, {
+    position: 'fixed',
+    inset: '0',
+    display: 'none',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.45)',
+    zIndex: '10000'
+  });
+
+  const panel = document.createElement('div');
+  Object.assign(panel.style, {
+    padding: '24px 28px',
+    background: 'rgba(10,16,24,0.9)',
+    border: '1px solid rgba(160,200,255,0.25)',
+    borderRadius: '14px',
+    color: '#e9f1ff',
+    fontFamily: 'system-ui, sans-serif',
+    textAlign: 'center',
+    minWidth: '280px'
+  });
+
+  const title = document.createElement('div');
+  title.textContent = 'Game Over';
+  title.style.fontSize = '20px';
+  title.style.marginBottom = '8px';
+
+  const info = document.createElement('div');
+  info.textContent = 'Du kannst jederzeit neu starten.';
+  info.style.opacity = '0.8';
+  info.style.marginBottom = '16px';
+
+  const btn = document.createElement('button');
+  btn.textContent = 'Restart';
+  Object.assign(btn.style, {
+    padding: '10px 16px',
+    background: '#2a66ff',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    fontSize: '15px'
+  });
+  btn.addEventListener('click', restartGame);
+
+  panel.appendChild(title);
+  panel.appendChild(info);
+  panel.appendChild(btn);
+  gameOverEl.appendChild(panel);
+  document.body.appendChild(gameOverEl);
+}
+
 function updateScoreUI({ wave, alive } = {}) {
   const w = (wave ?? enemyMgr?.wave ?? 1);
   const a = (alive ?? enemyMgr?.alive ?? 0);
   scoreEl.textContent = `Score: ${score}  |  Wave: ${w}  |  Enemies: ${a}`;
+}
+
+function updateBaseUI() {
+  const maxHP = CONFIG.base?.maxHP ?? 100;
+  baseEl.textContent = `Base HP: ${Math.max(0, Math.floor(baseHP))} / ${maxHP}`;
 }
 
 function initEnemies() {
@@ -151,11 +236,68 @@ function initEnemies() {
     turret,
     CONFIG.enemies,
     STEP2.hitFx,
+    // Score/Wave Callback
     (e) => {
       if (e.type === 'kill') { score += e.reward || 0; updateScoreUI({ alive: e.alive }); }
       if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
+    },
+    // Base-Hit Callback
+    (e) => {
+      onBaseHit(e.pos);
     }
   );
+}
+
+function onBaseHit(pos) {
+  if (isGameOver) return;
+
+  // kurze Unverwundbarkeit
+  if (baseInvuln > 0) return;
+
+  const dmg = CONFIG.base?.hitDamage ?? 20;
+  baseHP = Math.max(0, baseHP - dmg);
+  baseInvuln = CONFIG.base?.invulnAfterHit ?? 0.4;
+
+  updateBaseUI();
+
+  // optionaler "Wumms": Haptik/Audio
+  STEP2.audio?.playOverheat(); // Quick&dirty Effekt wiederverwenden
+
+  if (baseHP <= 0) {
+    gameOver();
+  }
+}
+
+function gameOver() {
+  isGameOver = true;
+  enemyMgr.enabled = false;
+  enemyMgr.clearAll();
+  gameOverEl.style.display = 'flex';
+}
+
+function restartGame() {
+  // Reset Werte
+  score = 0;
+  baseHP = CONFIG.base?.maxHP ?? 100;
+  baseInvuln = 0;
+  isGameOver = false;
+  updateScoreUI({ wave: 1, alive: 0 });
+  updateBaseUI();
+
+  // Gegner-System neu
+  enemyMgr = new EnemyManager(
+    scene,
+    turret,
+    CONFIG.enemies,
+    STEP2.hitFx,
+    (e) => {
+      if (e.type === 'kill') { score += e.reward || 0; updateScoreUI({ alive: e.alive }); }
+      if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
+    },
+    (e) => { onBaseHit(e.pos); }
+  );
+
+  gameOverEl.style.display = 'none';
 }
 
 function getCurrentCamera() {
@@ -183,10 +325,9 @@ function startLoop() {
 
     input.update?.(dt);
 
-    // === Aiming ===
+    // === Aiming (unverändert zur Steuerung) ===
     let aimed = false;
 
-    // Delta bevorzugt
     if (CONFIG.turret.controlMode === 'delta' && typeof input.getDeltaYawPitch === 'function') {
       const delta = input.getDeltaYawPitch();
       if (delta && delta.ok) {
@@ -205,11 +346,10 @@ function startLoop() {
         turret.setTargetAngles(targetYaw, targetPitch);
         aimed = true;
       } else {
-        hadRef = false; // Referenz neu setzen, sobald wieder stable
+        hadRef = false;
       }
     }
 
-    // Fallback: Absolut
     if (!aimed) {
       const dir = input.getAimDirection?.();
       if (dir) {
@@ -227,13 +367,18 @@ function startLoop() {
     }
 
     // Updates
+    if (baseInvuln > 0) baseInvuln -= dt;
+
     STEP2.gun.update(dt);
     STEP2.muzzleFx.update(dt, camera);
     STEP2.hitFx.update(dt);
     STEP2.heatUI.update(camera);
     STEP2.tracers?.update(dt);
 
-    if (enemyMgr) { enemyMgr.update(dt); updateScoreUI(); }
+    if (enemyMgr) {
+      enemyMgr.update(dt);
+      updateScoreUI();
+    }
 
     turret.update(dt, camera);
     renderer.render(scene, camera);
