@@ -136,6 +136,14 @@ export const CONFIG = {
     snapStrength: 0.6     // 0..1 – wie stark wir Richtung Ziel mischen
   },
 
+  // Verhindert zu frühe Bodentreffer bei flachem Zielen
+  aimConstraint: {
+    enabled: true,
+    groundY: 0,            // Bodenhöhe (y=0 in deiner Szene)
+    minGroundHitDist: 100, // mind. Distanz (m), bevor Boden getroffen werden darf
+    tiltUpMaxDeg: 6        // max. "Hochziehen" in Grad (sanft, kaum spürbar)
+  },
+
   // Gegner / Wellen
   enemies: {
     spawnRadius: 120,
