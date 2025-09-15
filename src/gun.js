@@ -93,14 +93,17 @@ export class GunSystem {
   fireOneShot() {
     this.raycaster.camera = this.getActiveCamera();
 
-    // Mündung & Richtung
+    // Mündung & Grundrichtung
     const pivot = this.turret.pitchPivot;
     const muzzleOffset = CONFIG.fire.muzzleOffset;
-    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(pivot.getWorldQuaternion(this.tmpQ)).normalize();
-    const origin = pivot.getWorldPosition(this.tmpV.set(0,0,0)).add(dir.clone().multiplyScalar(muzzleOffset));
+    const baseDir = new THREE.Vector3(0,0,-1).applyQuaternion(pivot.getWorldQuaternion(this.tmpQ)).normalize();
+    const origin = pivot.getWorldPosition(this.tmpV.set(0,0,0)).add(baseDir.clone().multiplyScalar(muzzleOffset));
 
-    // Aim-Assist: Richtung sanft korrigieren
-    const aimDir = this.applyAimAssist(origin, dir.clone());
+    // Aim-Assist (sanfte Korrektur)
+    let aimDir = this.applyAimAssist(origin, baseDir.clone());
+
+    // ✨ Ground-Clamp vor dem Spread (verhindert frühe Bodentreffer)
+    aimDir = this.applyGroundClamp(origin, aimDir);
 
     // Spread
     const spreadRad = THREE.MathUtils.degToRad(CONFIG.fire.spreadDeg);
@@ -110,6 +113,9 @@ export class GunSystem {
       const a = (Math.random()-0.5) * spreadRad;
       const b = (Math.random()-0.5) * spreadRad;
       aimDir.add(axis.multiplyScalar(a)).add(axis2.multiplyScalar(b)).normalize();
+
+      // ✨ Optional: nach dem Spread nochmal leicht clampen
+      aimDir = this.applyGroundClamp(origin, aimDir);
     }
 
     // Raycast
@@ -119,10 +125,7 @@ export class GunSystem {
 
     const hits = this.raycaster.intersectObjects(this.scene.children, true);
     let hit = null;
-    for (const h of hits) {
-      if (h.object.userData?.ignoreHit) continue;
-      hit = h; break;
-    }
+    for (const h of hits) { if (h.object.userData?.ignoreHit) continue; hit = h; break; }
 
     // FX/Audio/Haptik
     this.muzzleFx?.trigger(CONFIG.fire.muzzleFlashMs);
@@ -136,11 +139,11 @@ export class GunSystem {
     }
 
     if (hit) {
-      // visuelles Feedback am Einschlag
-      const n = hit.face?.normal ? hit.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)) : aimDir.clone().negate();
+      const n = hit.face?.normal
+        ? hit.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld))
+        : aimDir.clone().negate();
       this.hitFx?.spawnAt(hit.point, n);
 
-      // Schaden, falls Enemy
       const enemy = hit.object.userData?.enemy;
       if (enemy && typeof enemy.takeDamage === 'function') {
         enemy.takeDamage(CONFIG.fire.damage);
@@ -153,7 +156,7 @@ export class GunSystem {
     this.turret.setTargetAngles(yawNow, pitchNow - CONFIG.fire.recoilPitch);
   }
 
-  // --- Aim Assist ---
+  // --- Aim Assist (Magnetismus) ---
   applyAimAssist(origin, dir) {
     const aa = CONFIG.aimAssist || {};
     if (!aa.enabled) return dir;
@@ -163,9 +166,7 @@ export class GunSystem {
     const coneFar  = THREE.MathUtils.degToRad(aa.coneFarDeg  ?? 2);
     const strength = THREE.MathUtils.clamp(aa.snapStrength ?? 0.5, 0, 1);
 
-    // Kandidaten: alle Objekte mit userData.enemy
     let bestTarget = null, bestAng = Infinity, bestVec = null;
-
     this.scene.traverse(o => {
       const e = o.userData?.enemy;
       if (!e || !e.group) return;
@@ -173,21 +174,46 @@ export class GunSystem {
       const v = center.clone().sub(origin);
       const dist = v.length();
       if (dist <= 0.001 || dist > maxDist) return;
-
       v.normalize();
       const ang = Math.acos(THREE.MathUtils.clamp(v.dot(dir), -1, 1));
-      // Distanz-basierter Kegel
       const t = THREE.MathUtils.clamp(dist / maxDist, 0, 1);
       const limit = coneNear * (1 - t) + coneFar * t;
-      if (ang <= limit && ang < bestAng) {
-        bestAng = ang; bestTarget = e; bestVec = v;
-      }
+      if (ang <= limit && ang < bestAng) { bestAng = ang; bestTarget = e; bestVec = v; }
     });
 
     if (!bestTarget || !bestVec) return dir;
+    return dir.clone().multiplyScalar(1 - strength).add(bestVec.clone().multiplyScalar(strength)).normalize();
+  }
 
-    // sanft in Richtung Ziel „ziehen“
-    const corrected = dir.clone().multiplyScalar(1 - strength).add(bestVec.clone().multiplyScalar(strength)).normalize();
-    return corrected;
+  // --- Ground Clamp (verhindert, dass der Boden zu nah getroffen wird) ---
+  applyGroundClamp(origin, dir) {
+    const ac = CONFIG.aimConstraint || {};
+    if (!ac.enabled) return dir;
+
+    const groundY = ac.groundY ?? 0;
+    const minDist = ac.minGroundHitDist ?? 0;
+    if (minDist <= 0) return dir;
+
+    // Wenn wir nicht nach unten zielen oder Ursprung ~Bodenhöhe, keine Korrektur
+    if (dir.y >= -1e-5 || origin.y <= groundY + 1e-4) return dir;
+
+    // Distanz bis zum Boden entlang dir
+    const sGround = (groundY - origin.y) / dir.y; // dir.y < 0 → sGround > 0
+    if (sGround >= minDist) return dir; // passt schon
+
+    // erforderliche minimale y-Komponente, damit sGround == minDist
+    const vyMin = (groundY - origin.y) / Math.max(minDist, 1e-3); // negativ
+    const v = dir.clone();
+    v.y = Math.max(vyMin, -1e-3); // nie zu steil nach unten
+    v.normalize();
+
+    // Begrenze die Korrektur (Tilt) auf ein paar Grad, damit es „unsichtbar“ bleibt
+    const maxTilt = THREE.MathUtils.degToRad(ac.tiltUpMaxDeg ?? 6);
+    const ang = Math.acos(THREE.MathUtils.clamp(dir.dot(v), -1, 1));
+    if (ang <= maxTilt) return v;
+
+    // Sanft zwischen originaler Richtung und geklemmter Richtung interpolieren
+    const t = maxTilt / Math.max(ang, 1e-6);
+    return dir.clone().multiplyScalar(1 - t).add(v.multiplyScalar(t)).normalize();
   }
 }
