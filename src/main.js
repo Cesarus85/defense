@@ -1,6 +1,6 @@
 // /src/main.js
-// Fügt Base-HP, Schaden bei Ankunft, Game-Over & Restart hinzu.
-// Keine Änderungen an deiner Turret-/Input-Steuerung.
+// XR Main: Turret-Shooter mit Delta-Steuerung, Enemies/Waves, Base-HP & 3D-GameOver-Banner.
+// Steuerungslogik/Handling bleibt unverändert (Input/Turret).
 
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
@@ -9,7 +9,7 @@ import { createInput } from './input.js';
 import { Turret } from './turret.js';
 
 import { AudioManager } from './audio.js';
-import { MuzzleFlash, HitSparks, TracerPool } from './fx.js';
+import { MuzzleFlash, HitSparks, TracerPool, GameOverBanner3D } from './fx.js';
 import { HeatBar3D } from './ui.js';
 import { GunSystem } from './gun.js';
 import { EnemyManager } from './enemies.js';
@@ -18,8 +18,16 @@ let scene, camera, renderer;
 let input, turret;
 let needPlaceFromHMD = false;
 
-// Step2 Container
-const STEP2 = { audio: null, muzzleFx: null, hitFx: null, heatUI: null, gun: null, tracers: null };
+// Systeme (Audio/FX/Gun/Tracer/GameOver3D)
+const STEP2 = {
+  audio: null,
+  muzzleFx: null,
+  hitFx: null,
+  heatUI: null,
+  gun: null,
+  tracers: null,
+  gameOver3D: null,
+};
 
 // Enemies / Score / Base
 let enemyMgr = null;
@@ -31,9 +39,9 @@ let baseInvuln = 0;
 let baseEl = null;
 
 let isGameOver = false;
-let gameOverEl = null;
+let gameOverEl = null; // DOM-Overlay (Desktop), in VR ggf. unsichtbar
 
-// Delta-Baseline (nur für 'delta')
+// Delta-Baseline (nur für controlMode='delta')
 let baseTurretYaw = 0, baseTurretPitch = 0;
 let hadRef = false;
 
@@ -58,7 +66,7 @@ function init() {
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Sky
+  // Sky (einfacher Gradient + Fog)
   scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
@@ -67,9 +75,14 @@ function init() {
       topColor:    { value: new THREE.Color(CONFIG.sky.topColor) },
       bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) }
     },
-    vertexShader: `varying vec3 vPos; void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
-    fragmentShader:`uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
-                    void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }`
+    vertexShader: `
+      varying vec3 vPos;
+      void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+    `,
+    fragmentShader: `
+      uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
+      void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }
+    `
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
@@ -99,17 +112,17 @@ function init() {
   // Input
   input = createInput(renderer, scene, camera, { handles: { left: turret.leftHandle, right: turret.rightHandle } });
 
-  // VR: nach Sessionstart sauber platzieren
+  // VR: nach Sessionstart sauber vor den Spieler platzieren
   renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; resetDeltaBaseline(); });
 
   // Desktop: initial platzieren
   placeTurretFromCamera(getCurrentCamera());
 
-  // Step2 Systeme
+  // Systeme (Audio/FX/Gun/Tracer/GameOver3D)
   initStep2Systems();
   window.addEventListener('pointerdown', () => STEP2.audio?.ensure(), { once: true });
 
-  // UI Overlays
+  // UI Overlays (DOM – auf Quest XR evtl. unsichtbar)
   initScoreUI();
   initBaseUI();
   initGameOverUI();
@@ -121,12 +134,13 @@ function init() {
 }
 
 function initStep2Systems() {
-  STEP2.audio    = new AudioManager();
-  STEP2.muzzleFx = new MuzzleFlash(turret, CONFIG.fire.muzzleOffset);
-  STEP2.hitFx    = new HitSparks(scene);
-  STEP2.heatUI   = new HeatBar3D(scene, turret);
-  STEP2.tracers  = new TracerPool(scene);
-  STEP2.gun      = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI, STEP2.tracers);
+  STEP2.audio     = new AudioManager();
+  STEP2.muzzleFx  = new MuzzleFlash(turret, CONFIG.fire.muzzleOffset);
+  STEP2.hitFx     = new HitSparks(scene);
+  STEP2.heatUI    = new HeatBar3D(scene, turret);
+  STEP2.tracers   = new TracerPool(scene);
+  STEP2.gun       = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI, STEP2.tracers);
+  STEP2.gameOver3D = new GameOverBanner3D(scene);
 }
 
 function initScoreUI() {
@@ -166,6 +180,7 @@ function initBaseUI() {
 }
 
 function initGameOverUI() {
+  // Desktop-/Dev-Overlay (in Quest-Session i. d. R. unsichtbar)
   gameOverEl = document.createElement('div');
   Object.assign(gameOverEl.style, {
     position: 'fixed',
@@ -195,7 +210,7 @@ function initGameOverUI() {
   title.style.marginBottom = '8px';
 
   const info = document.createElement('div');
-  info.textContent = 'Du kannst jederzeit neu starten.';
+  info.textContent = 'Drücke „Restart“ oder rufe das Menü auf.';
   info.style.opacity = '0.8';
   info.style.marginBottom = '16px';
 
@@ -242,16 +257,12 @@ function initEnemies() {
       if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
     },
     // Base-Hit Callback
-    (e) => {
-      onBaseHit(e.pos);
-    }
+    (e) => { onBaseHit(e.pos); }
   );
 }
 
 function onBaseHit(pos) {
   if (isGameOver) return;
-
-  // kurze Unverwundbarkeit
   if (baseInvuln > 0) return;
 
   const dmg = CONFIG.base?.hitDamage ?? 20;
@@ -260,8 +271,8 @@ function onBaseHit(pos) {
 
   updateBaseUI();
 
-  // optionaler "Wumms": Haptik/Audio
-  STEP2.audio?.playOverheat(); // Quick&dirty Effekt wiederverwenden
+  // schnelles Feedback (Audio/Haptik)
+  STEP2.audio?.playOverheat();
 
   if (baseHP <= 0) {
     gameOver();
@@ -270,13 +281,18 @@ function onBaseHit(pos) {
 
 function gameOver() {
   isGameOver = true;
-  enemyMgr.enabled = false;
-  enemyMgr.clearAll();
-  gameOverEl.style.display = 'flex';
+  if (enemyMgr) {
+    enemyMgr.enabled = false;
+    enemyMgr.clearAll();
+  }
+  // DOM-Overlay (Desktop)
+  if (gameOverEl) gameOverEl.style.display = 'flex';
+  // 3D-Banner (sichtbar in VR)
+  STEP2.gameOver3D?.show(getCurrentCamera());
 }
 
 function restartGame() {
-  // Reset Werte
+  // Reset
   score = 0;
   baseHP = CONFIG.base?.maxHP ?? 100;
   baseInvuln = 0;
@@ -284,7 +300,7 @@ function restartGame() {
   updateScoreUI({ wave: 1, alive: 0 });
   updateBaseUI();
 
-  // Gegner-System neu
+  // Gegner-System neu starten
   enemyMgr = new EnemyManager(
     scene,
     turret,
@@ -297,7 +313,9 @@ function restartGame() {
     (e) => { onBaseHit(e.pos); }
   );
 
-  gameOverEl.style.display = 'none';
+  // Overlays schließen
+  if (gameOverEl) gameOverEl.style.display = 'none';
+  STEP2.gameOver3D?.hide();
 }
 
 function getCurrentCamera() {
@@ -325,7 +343,7 @@ function startLoop() {
 
     input.update?.(dt);
 
-    // === Aiming (unverändert zur Steuerung) ===
+    // === Aiming (Delta bevorzugt, Fallback absolut) ===
     let aimed = false;
 
     if (CONFIG.turret.controlMode === 'delta' && typeof input.getDeltaYawPitch === 'function') {
@@ -346,7 +364,7 @@ function startLoop() {
         turret.setTargetAngles(targetYaw, targetPitch);
         aimed = true;
       } else {
-        hadRef = false;
+        hadRef = false; // Referenz neu setzen, sobald wieder stable
       }
     }
 
@@ -366,14 +384,16 @@ function startLoop() {
       }
     }
 
-    // Updates
+    // Timers
     if (baseInvuln > 0) baseInvuln -= dt;
 
+    // Updates
     STEP2.gun.update(dt);
     STEP2.muzzleFx.update(dt, camera);
     STEP2.hitFx.update(dt);
     STEP2.heatUI.update(camera);
     STEP2.tracers?.update(dt);
+    STEP2.gameOver3D?.update(getCurrentCamera(), dt);
 
     if (enemyMgr) {
       enemyMgr.update(dt);
@@ -405,7 +425,9 @@ function placeTurretFromCamera(cam) {
   const headPos = new THREE.Vector3(); cam.getWorldPosition(headPos);
   const headQuat = cam.getWorldQuaternion(new THREE.Quaternion());
   const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(headQuat);
-  const fwdXZ = new THREE.Vector3(fwd.x, 0, fwd.z); if (fwdXZ.lengthSq()<1e-6) fwdXZ.set(0,0,-1); fwdXZ.normalize();
+  const fwdXZ = new THREE.Vector3(fwd.x, 0, fwd.z);
+  if (fwdXZ.lengthSq()<1e-6) fwdXZ.set(0,0,-1);
+  fwdXZ.normalize();
 
   const dist = Math.abs(CONFIG.turret.offsetZFromPlayer);
   const basePos = new THREE.Vector3(headPos.x, 0, headPos.z).add(fwdXZ.clone().multiplyScalar(dist));
@@ -414,6 +436,7 @@ function placeTurretFromCamera(cam) {
   let yaw = Math.atan2(fwdXZ.x, -fwdXZ.z);
   turret.root.rotation.set(0, yaw, 0);
 
+  // Safety-Flip falls Rohr zum Spieler zeigen würde
   const forwardAfterYaw = new THREE.Vector3(0,0,-1).applyEuler(new THREE.Euler(0, yaw, 0, 'XYZ'));
   if (forwardAfterYaw.dot(fwdXZ) < 0) { yaw += Math.PI; turret.root.rotation.set(0, yaw, 0); }
 
