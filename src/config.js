@@ -161,5 +161,19 @@ export const CONFIG = {
       scale: 1.6,        // NEU: größer darstellen
       hitRadius: 0.55    // NEU: größere (unsichtbare) Trefferkugel
     }
+  },
+
+  // --- STEP 5: Score/Combo + Trefferzonen ---
+  score: {
+    base: 1.0,
+    max: 5.0,
+    comboStep: 0.25,
+    headshotBonus: 0.5,
+    comboTime: 3.0
+  },
+
+  zones: {
+    head: { damageMul: 2.0, scoreMul: 2.0 },
+    core: { damageMul: 1.0, scoreMul: 1.0 }
   }
 };

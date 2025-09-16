@@ -146,7 +146,10 @@ export class GunSystem {
 
       const enemy = hit.object.userData?.enemy;
       if (enemy && typeof enemy.takeDamage === 'function') {
-        enemy.takeDamage(CONFIG.fire.damage);
+        const zone = (hit.object.userData?.zone)||'core';
+        enemy.takeDamage(CONFIG.fire.damage, zone);
+        // Headshot feedback (audio)
+        if (zone === 'head') { this.audio?.playHeadshot?.(); }
       }
     }
 
