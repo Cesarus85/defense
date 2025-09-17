@@ -19,6 +19,13 @@ let scene, camera, renderer;
 let input, turret;
 let needPlaceFromHMD = false;
 
+// Globale Referenzen für Materialien
+let skyMaterial = null;
+let terrainMaterial = null;
+
+// VR Controller Raycast Beams
+let controllerBeams = [];
+
 // Systeme (Audio/FX/Gun/Tracer/GameOver3D)
 const STEP2 = {
   audio: null,
@@ -62,12 +69,16 @@ init();
 startLoop();
 
 function init() {
-  // Renderer
+  // Renderer mit erweiterten Einstellungen
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.xr.enabled = true;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
   document.body.appendChild(renderer.domElement);
 
   // VR Button
@@ -79,52 +90,210 @@ function init() {
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Sky (hellerer Gradient + reduzierter Fog)
-  scene.fog = new THREE.FogExp2(0x2a4560, 0.0004);
-  const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
+  // Erweiterte Atmosphäre mit reichhaltigerem Skybox
+  scene.fog = new THREE.FogExp2(0x2a4560, 0.0003);
+
+  // Haupt-Skybox mit verbessertem Shader
+  const skyGeo = new THREE.SphereGeometry(1200, 64, 32);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     uniforms: {
       topColor:    { value: new THREE.Color(CONFIG.sky.topColor) },
-      bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) }
+      bottomColor: { value: new THREE.Color(CONFIG.sky.bottomColor) },
+      horizonColor: { value: new THREE.Color(0x6688aa) },
+      sunPosition: { value: new THREE.Vector3(0.3, 0.4, 0.5) },
+      time: { value: 0.0 }
     },
     vertexShader: `
       varying vec3 vPos;
-      void main(){ vPos=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+      varying vec3 vWorldPos;
+      void main(){
+        vPos = position;
+        vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
     `,
     fragmentShader: `
-      uniform vec3 topColor; uniform vec3 bottomColor; varying vec3 vPos;
-      void main(){ float h=normalize(vPos).y*0.5+0.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.0); }
+      uniform vec3 topColor;
+      uniform vec3 bottomColor;
+      uniform vec3 horizonColor;
+      uniform vec3 sunPosition;
+      uniform float time;
+      varying vec3 vPos;
+      varying vec3 vWorldPos;
+
+      void main(){
+        vec3 dir = normalize(vPos);
+        float h = dir.y * 0.5 + 0.5;
+
+        // Basis-Gradient
+        vec3 skyColor = mix(bottomColor, topColor, h);
+
+        // Horizont-Verstärkung
+        float horizonFactor = 1.0 - abs(dir.y);
+        horizonFactor = pow(horizonFactor, 2.0);
+        skyColor = mix(skyColor, horizonColor, horizonFactor * 0.3);
+
+        // Wolken-Simulation
+        float cloudNoise = sin(dir.x * 10.0 + time * 0.1) * cos(dir.z * 8.0 + time * 0.08);
+        cloudNoise += sin(dir.x * 25.0 - time * 0.05) * cos(dir.z * 20.0);
+        cloudNoise = smoothstep(0.3, 0.8, cloudNoise * 0.5 + 0.5);
+
+        if(h > 0.3 && h < 0.9) {
+          vec3 cloudColor = mix(vec3(0.8, 0.85, 0.9), vec3(0.6, 0.65, 0.75), cloudNoise);
+          skyColor = mix(skyColor, cloudColor, cloudNoise * 0.4);
+        }
+
+        // Sterne (nur im oberen Bereich)
+        if(h > 0.7) {
+          float star = sin(dir.x * 200.0) * cos(dir.z * 200.0) * sin(dir.y * 150.0);
+          star = step(0.99, star);
+          skyColor += vec3(star * 0.8);
+        }
+
+        gl_FragColor = vec4(skyColor, 1.0);
+      }
     `
   });
-  scene.add(new THREE.Mesh(skyGeo, skyMat));
+  const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+  scene.add(skyMesh);
 
-  // Lights (heller und mehr Beleuchtung)
+  // Horizont-Details hinzufügen
+  addHorizonDetails(scene);
+
+  // Skybox-Animation aktivieren
+  skyMaterial = skyMat;
+
+  // Erweiterte Beleuchtung für bessere visuelle Qualität
   scene.add(new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity));
+
+  // Hauptlicht mit verbessertes Shadow Mapping
   const dir = new THREE.DirectionalLight(CONFIG.lights.dir.color, CONFIG.lights.dir.intensity);
   dir.position.set(...CONFIG.lights.dir.position);
   dir.castShadow = true;
-  dir.shadow.mapSize.width = 2048;
-  dir.shadow.mapSize.height = 2048;
+  dir.shadow.mapSize.width = 4096;
+  dir.shadow.mapSize.height = 4096;
+  dir.shadow.camera.near = 0.5;
+  dir.shadow.camera.far = 500;
+  dir.shadow.camera.left = -100;
+  dir.shadow.camera.right = 100;
+  dir.shadow.camera.top = 100;
+  dir.shadow.camera.bottom = -100;
+  dir.shadow.bias = -0.0001;
   scene.add(dir);
+
+  // Zusätzliche Punkt-Lichter für Atmosphäre
+  const pointLight1 = new THREE.PointLight(0x4488ff, 0.8, 50);
+  pointLight1.position.set(30, 15, 30);
+  pointLight1.castShadow = true;
+  pointLight1.shadow.mapSize.width = 1024;
+  pointLight1.shadow.mapSize.height = 1024;
+  scene.add(pointLight1);
+
+  const pointLight2 = new THREE.PointLight(0xff8844, 0.6, 40);
+  pointLight2.position.set(-25, 12, -25);
+  pointLight2.castShadow = true;
+  pointLight2.shadow.mapSize.width = 1024;
+  pointLight2.shadow.mapSize.height = 1024;
+  scene.add(pointLight2);
+
+  // Spot-Light für dramatische Effekte
+  const spotLight = new THREE.SpotLight(0xffffff, 1.5, 80, Math.PI / 6, 0.3, 2);
+  spotLight.position.set(0, 50, 0);
+  spotLight.target.position.set(0, 0, 0);
+  spotLight.castShadow = true;
+  spotLight.shadow.mapSize.width = 2048;
+  spotLight.shadow.mapSize.height = 2048;
+  scene.add(spotLight);
+  scene.add(spotLight.target);
 
   // Zusätzliches Ambiente-Licht
   if (CONFIG.lights.ambient) {
     scene.add(new THREE.AmbientLight(CONFIG.lights.ambient.color, CONFIG.lights.ambient.intensity));
   }
 
-  // Ground + Grid (hellere Farben)
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize),
-    new THREE.MeshStandardMaterial({ color: 0x3a4a5a, roughness: 0.8, metalness: 0.1 })
-  );
+  // Verbessertes Terrain mit Texturing
+  const groundGeometry = new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize, 128, 128);
+
+  // Terrain-Shader für realistischere Oberfläche
+  const groundMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      baseColor: { value: new THREE.Color(0x3a4a5a) },
+      detailColor: { value: new THREE.Color(0x2a3a4a) },
+      time: { value: 0.0 },
+      roughness: { value: 0.8 },
+      metalness: { value: 0.1 }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      uniform float time;
+
+      void main() {
+        vUv = uv;
+        vNormal = normal;
+        vPosition = position;
+
+        // Leichte Terrain-Verformung
+        vec3 pos = position;
+        float noise = sin(pos.x * 0.02) * cos(pos.z * 0.015) * 0.5;
+        noise += sin(pos.x * 0.05 + time * 0.1) * cos(pos.z * 0.04) * 0.2;
+        pos.y += noise;
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 baseColor;
+      uniform vec3 detailColor;
+      varying vec2 vUv;
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+
+      void main() {
+        // Hexagon-Muster für technischen Look
+        vec2 hexUv = vUv * 50.0;
+        vec2 hexCenter = vec2(floor(hexUv.x), floor(hexUv.y));
+        vec2 hexOffset = hexUv - hexCenter;
+
+        float hexDist = length(hexOffset - 0.5);
+        float hexPattern = smoothstep(0.4, 0.45, hexDist);
+
+        // Detail-Noise
+        float detailNoise = sin(vPosition.x * 0.5) * cos(vPosition.z * 0.5);
+        detailNoise = detailNoise * 0.5 + 0.5;
+
+        // Farb-Mischung
+        vec3 finalColor = mix(baseColor, detailColor, hexPattern * 0.3);
+        finalColor = mix(finalColor, detailColor * 1.2, detailNoise * 0.2);
+
+        // Entfernungs-basierte Variation
+        float distanceFromCenter = length(vPosition.xz) / 200.0;
+        finalColor = mix(finalColor, baseColor * 0.8, clamp(distanceFromCenter, 0.0, 0.5));
+
+        gl_FragColor = vec4(finalColor, 1.0);
+      }
+    `
+  });
+
+  const ground = new THREE.Mesh(groundGeometry, groundMaterial);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x5a6a7a, 0x404a5a);
-  grid.position.y = 0.01;
-  scene.add(grid);
+  // Detailliertes Grid mit verschiedenen Ebenen
+  const mainGrid = new THREE.GridHelper(CONFIG.groundSize, 40, 0x5a6a7a, 0x404a5a);
+  mainGrid.position.y = 0.01;
+  scene.add(mainGrid);
+
+  // Feineres Sub-Grid
+  const subGrid = new THREE.GridHelper(CONFIG.groundSize / 2, 80, 0x404a5a, 0x303a4a);
+  subGrid.position.y = 0.005;
+  scene.add(subGrid);
+
+  // Terrain-Material für Animation speichern
+  terrainMaterial = groundMaterial;
 
   // Turret
   turret = new Turret();
@@ -159,6 +328,9 @@ function init() {
   initGameOverUI();
 
   setupXRExitInteraction();
+
+  // VR Controller Beams initialisieren
+  initControllerBeams();
 
   // Enemies
   initEnemies();
@@ -353,15 +525,28 @@ function onBaseHit(pos) {
 }
 
 function gameOver() {
+  console.log('Game Over triggered!');
   isGameOver = true;
+  window.isGameOver = true;  // Global für gun.js verfügbar machen
+
   if (enemyMgr) {
     enemyMgr.enabled = false;
     enemyMgr.clearAll();
   }
+
   // DOM-Overlay (Desktop)
-  if (gameOverEl) gameOverEl.style.display = renderer.xr.isPresenting ? 'none' : 'flex';
+  if (gameOverEl) {
+    gameOverEl.style.display = renderer.xr.isPresenting ? 'none' : 'flex';
+    console.log('DOM Game Over displayed:', !renderer.xr.isPresenting);
+  }
+
   // 3D-Banner (sichtbar in VR)
-  STEP2.gameOver3D?.show(getCurrentCamera());
+  if (STEP2.gameOver3D) {
+    console.log('Showing 3D Game Over banner');
+    STEP2.gameOver3D.show(getCurrentCamera());
+  } else {
+    console.error('gameOver3D not available!');
+  }
 }
 
 function restartGame() {
@@ -370,6 +555,7 @@ function restartGame() {
   baseHP = CONFIG.base?.maxHP ?? 100;
   baseInvuln = 0;
   isGameOver = false;
+  window.isGameOver = false;  // Global zurücksetzen
   updateScoreUI({ wave: 1, alive: 0 });
   updateBaseUI();
 
@@ -485,14 +671,133 @@ function startLoop() {
     STEP2.scoreUI?.update(activeCamera, dt);
     STEP2.gameOver3D?.update(activeCamera, dt);
 
+    // Update VR Controller Raycast für UI Hover-Effekte (nur bei Game Over)
+    if (isGameOver && renderer?.xr?.isPresenting && STEP2.gameOver3D?.isInteractive()) {
+      updateControllerRaycast();
+    } else {
+      // Beams verstecken wenn nicht Game Over
+      if (controllerBeams && controllerBeams.length > 0) {
+        controllerBeams.forEach(beam => {
+          if (beam && beam.visible) beam.visible = false;
+        });
+      }
+    }
+
     if (enemyMgr) {
       enemyMgr.update(dt);
       updateScoreUI();
     }
 
     turret.update(dt, camera);
+
+    // Skybox-Animation
+    if (skyMaterial) {
+      skyMaterial.uniforms.time.value += dt * 0.5;
+    }
+
+    // Terrain-Animation
+    if (terrainMaterial) {
+      terrainMaterial.uniforms.time.value += dt * 0.3;
+    }
+
     renderer.render(scene, camera);
   });
+}
+
+function initControllerBeams() {
+  // Erstelle sichtbare Strahlen für beide Controller (safe initialization)
+  try {
+    controllerBeams = []; // Reset array
+    for (let i = 0; i < 2; i++) {
+      const beamGeometry = new THREE.CylinderGeometry(0.002, 0.002, 1, 8);
+      const beamMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00aaff,
+        transparent: true,
+        opacity: 0.6,
+        emissive: 0x002244,
+        emissiveIntensity: 0.3
+      });
+
+      const beam = new THREE.Mesh(beamGeometry, beamMaterial);
+      beam.visible = false;
+      beam.userData.ignoreHit = true;
+
+      if (scene) {
+        scene.add(beam);
+        controllerBeams.push(beam);
+        console.log(`Controller beam ${i} initialized`);
+      }
+    }
+  } catch (error) {
+    console.error('Error initializing controller beams:', error);
+    controllerBeams = [];
+  }
+}
+
+function addHorizonDetails(scene) {
+  // Entfernte Berge am Horizont
+  const mountainGeometry = new THREE.PlaneGeometry(2000, 200);
+  const mountainMaterial = new THREE.ShaderMaterial({
+    transparent: true,
+    side: THREE.DoubleSide,
+    uniforms: {
+      color: { value: new THREE.Color(0x334455) },
+      opacity: { value: 0.4 }
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying float vHeight;
+      void main() {
+        vUv = uv;
+        vec3 pos = position;
+        // Berge-Form mit Noise
+        float height = sin(pos.x * 0.01) * 50.0 + cos(pos.x * 0.003) * 80.0;
+        pos.y += height;
+        vHeight = height;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 color;
+      uniform float opacity;
+      varying vec2 vUv;
+      varying float vHeight;
+      void main() {
+        float alpha = opacity * (1.0 - vUv.y);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `
+  });
+
+  // Mehrere Berg-Ebenen für Tiefe
+  for (let i = 0; i < 3; i++) {
+    const mountains = new THREE.Mesh(mountainGeometry, mountainMaterial.clone());
+    mountains.position.set(0, 50 + i * 20, -800 - i * 200);
+    mountains.material.uniforms.opacity.value = 0.6 - i * 0.15;
+    mountains.material.uniforms.color.value.setHex(0x334455 + i * 0x111111);
+    scene.add(mountains);
+  }
+
+  // Horizont-Nebel
+  const fogGeometry = new THREE.PlaneGeometry(3000, 100);
+  const fogMaterial = new THREE.MeshBasicMaterial({
+    color: 0x667788,
+    transparent: true,
+    opacity: 0.2,
+    fog: false
+  });
+
+  for (let i = 0; i < 8; i++) {
+    const fogPlane = new THREE.Mesh(fogGeometry, fogMaterial.clone());
+    const angle = (i / 8) * Math.PI * 2;
+    fogPlane.position.set(
+      Math.cos(angle) * 600,
+      30,
+      Math.sin(angle) * 600
+    );
+    fogPlane.lookAt(0, 30, 0);
+    scene.add(fogPlane);
+  }
 }
 
 function resetDeltaBaseline() { hadRef = false; }
@@ -547,12 +852,112 @@ function setupXRExitInteraction() {
   }
 }
 
+function updateControllerRaycast() {
+  // Sichere Raycast-Implementation
+  try {
+    // Validate essential objects first
+    if (!renderer?.xr?.isPresenting || !controllerBeams || controllerBeams.length === 0) {
+      // Hide all beams when conditions not met
+      controllerBeams?.forEach(beam => {
+        if (beam && beam.visible) beam.visible = false;
+      });
+      return;
+    }
+
+    const gameOverActive = STEP2.gameOver3D?.isInteractive?.();
+    if (!gameOverActive) {
+      // Kein Game Over Banner sichtbar - Beams verstecken
+      STEP2.gameOver3D?.setButtonHover?.(false);
+      controllerBeams.forEach(beam => {
+        if (beam && beam.visible) beam.visible = false;
+      });
+      return;
+    }
+
+    let hovering = false;
+
+    // Check beide Controller
+    for (let i = 0; i < Math.min(2, controllerBeams.length); i++) {
+      const beam = controllerBeams[i];
+
+      // Skip if beam doesn't exist or has issues
+      if (!beam || !beam.material || !beam.material.color) {
+        continue;
+      }
+
+      const controller = renderer.xr.getController(i);
+      if (!controller) {
+        beam.visible = false;
+        continue;
+      }
+
+      try {
+        // Get controller position and orientation
+        controller.getWorldPosition(xrRayOrigin);
+        controller.getWorldQuaternion(xrRayQuat);
+        xrRayDir.set(0, 0, -1).applyQuaternion(xrRayQuat).normalize();
+
+        // Make beam visible and position it
+        beam.visible = true;
+        beam.position.copy(xrRayOrigin);
+        beam.lookAt(xrRayOrigin.clone().add(xrRayDir));
+        beam.rotateX(Math.PI / 2);
+
+        // Set default beam length
+        const beamLength = 5.0;
+        beam.scale.y = beamLength;
+        beam.position.addScaledVector(xrRayDir, beamLength / 2);
+
+        // Set default blue color safely
+        beam.material.color.setHex(0x00aaff);
+        if (beam.material.emissive) {
+          beam.material.emissive.setHex(0x002244);
+        }
+
+        // Check for button intersection
+        xrRaycaster.set(xrRayOrigin, xrRayDir);
+        const meshes = STEP2.gameOver3D?.getInteractiveMeshes?.();
+        if (meshes && meshes.length > 0) {
+          const intersections = xrRaycaster.intersectObjects(meshes, false);
+          if (intersections.length > 0) {
+            const first = intersections[0].object;
+            if (first?.userData?.action === 'exit-vr') {
+              hovering = true;
+
+              // Change to green and shorten beam to button
+              beam.material.color.setHex(0x00ff88);
+              if (beam.material.emissive) {
+                beam.material.emissive.setHex(0x004422);
+              }
+
+              const distance = intersections[0].distance;
+              beam.scale.y = distance;
+              beam.position.copy(xrRayOrigin);
+              beam.position.addScaledVector(xrRayDir, distance / 2);
+            }
+          }
+        }
+
+      } catch (innerError) {
+        console.warn(`Error processing controller ${i}:`, innerError);
+        beam.visible = false;
+      }
+    }
+
+    // Update hover state
+    STEP2.gameOver3D?.setButtonHover?.(hovering);
+
+  } catch (error) {
+    console.error('Critical error in updateControllerRaycast:', error);
+    // Emergency cleanup
+    controllerBeams?.forEach(beam => {
+      if (beam) beam.visible = false;
+    });
+  }
+}
+
 function onXRSelectStart(event) {
   if (!renderer.xr.isPresenting) return;
-  if (!STEP2.gameOver3D?.isInteractive()) return;
-
-  const meshes = STEP2.gameOver3D.getInteractiveMeshes?.();
-  if (!meshes || meshes.length === 0) return;
 
   const controller = event.target;
   controller.getWorldPosition(xrRayOrigin);
@@ -560,11 +965,27 @@ function onXRSelectStart(event) {
   xrRayDir.set(0, 0, -1).applyQuaternion(xrRayQuat).normalize();
 
   xrRaycaster.set(xrRayOrigin, xrRayDir);
-  const intersections = xrRaycaster.intersectObjects(meshes, false);
-  if (intersections.length === 0) return;
 
-  const first = intersections[0].object;
-  if (first?.userData?.action === 'exit-vr') {
-    renderer.xr.getSession()?.end();
+  // Check Game Over Button wenn sichtbar
+  if (STEP2.gameOver3D?.isInteractive()) {
+    const meshes = STEP2.gameOver3D.getInteractiveMeshes?.();
+    if (meshes && meshes.length > 0) {
+      const intersections = xrRaycaster.intersectObjects(meshes, false);
+      if (intersections.length > 0) {
+        const first = intersections[0].object;
+        if (first?.userData?.action === 'exit-vr') {
+          console.log('Exit VR button clicked!');
+          // Visuelles Feedback
+          if (STEP2.audio) {
+            STEP2.audio.playOverheat(); // Sound-Feedback
+          }
+          // VR Session beenden
+          setTimeout(() => {
+            renderer.xr.getSession()?.end();
+          }, 100);
+          return;
+        }
+      }
+    }
   }
 }

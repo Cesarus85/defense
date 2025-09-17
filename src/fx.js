@@ -8,35 +8,90 @@ export class MuzzleFlash {
   constructor(turret, offset = 1.1) {
     this.turret = turret;
     this.life = 0;
+    this.maxLife = 0;
 
-    const tex = makeCircleTexture(); // weiches Leuchten
-    const mat = new THREE.SpriteMaterial({
-      map: tex,
+    // Mehrere Ebenen für reichhaltigeren Effekt
+    this.group = new THREE.Group();
+
+    // Haupt-Flash
+    const mainTex = makeCircleTexture();
+    const mainMat = new THREE.SpriteMaterial({
+      map: mainTex,
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending
+      blending: THREE.AdditiveBlending,
+      color: 0xffffff
     });
-    this.sprite = new THREE.Sprite(mat);
-    this.sprite.scale.set(0.22, 0.22, 0.22);
-    this.sprite.userData.ignoreHit = true; // nicht hittbar
+    this.mainSprite = new THREE.Sprite(mainMat);
+    this.mainSprite.scale.set(0.3, 0.3, 0.3);
+
+    // Sekundärer Flash (größer, schwächer)
+    const secondaryMat = new THREE.SpriteMaterial({
+      map: mainTex,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      color: 0xffaa44
+    });
+    this.secondarySprite = new THREE.Sprite(secondaryMat);
+    this.secondarySprite.scale.set(0.5, 0.5, 0.5);
+
+    // Ring-Effekt
+    const ringTex = makeCircleTexture(64, 0x88ddff);
+    const ringMat = new THREE.SpriteMaterial({
+      map: ringTex,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      color: 0x88ddff
+    });
+    this.ringSprite = new THREE.Sprite(ringMat);
+    this.ringSprite.scale.set(0.4, 0.4, 0.4);
+
+    this.group.add(this.mainSprite, this.secondarySprite, this.ringSprite);
+    this.group.userData.ignoreHit = true;
     this.offset = offset;
 
-    turret.pitchPivot.add(this.sprite);
-    this.sprite.position.set(0, 0, -this.offset);
-    this.sprite.visible = false;
+    turret.pitchPivot.add(this.group);
+    this.group.position.set(0, 0, -this.offset);
+    this.group.visible = false;
   }
 
   trigger(ms = 40) {
     this.life = ms / 1000;
-    this.sprite.visible = true;
+    this.maxLife = this.life;
+    this.group.visible = true;
+
+    // Zufällige Rotation für Variation
+    this.group.rotation.z = Math.random() * Math.PI * 2;
   }
 
   update(dt, camera) {
     if (this.life > 0) {
       this.life -= dt;
-      this.sprite.material.opacity = Math.max(0, this.life * 5);
-      if (camera) this.sprite.lookAt(camera.position);
-      if (this.life <= 0) this.sprite.visible = false;
+      const progress = 1 - (this.life / this.maxLife);
+
+      // Verschiedene Fade-Kurven für die Sprites
+      this.mainSprite.material.opacity = Math.max(0, this.life * 8);
+      this.secondarySprite.material.opacity = Math.max(0, this.life * 4);
+      this.ringSprite.material.opacity = Math.max(0, (this.life * 3) * (1 - progress * 0.5));
+
+      // Größen-Animation
+      const scaleMain = 0.3 + progress * 0.1;
+      const scaleSecondary = 0.5 + progress * 0.2;
+      const scaleRing = 0.4 + progress * 0.3;
+
+      this.mainSprite.scale.setScalar(scaleMain);
+      this.secondarySprite.scale.setScalar(scaleSecondary);
+      this.ringSprite.scale.setScalar(scaleRing);
+
+      if (camera) {
+        this.mainSprite.lookAt(camera.position);
+        this.secondarySprite.lookAt(camera.position);
+        this.ringSprite.lookAt(camera.position);
+      }
+
+      if (this.life <= 0) this.group.visible = false;
     }
   }
 }
@@ -50,36 +105,40 @@ export class HitSparks {
 
   spawnAt(point, normal, intensity = 1.0) {
     // Mehr Funken basierend auf Intensität
-    const sparkCount = Math.floor(3 + intensity * 4);
-    
+    const sparkCount = Math.floor(5 + intensity * 8);
+
     for (let i = 0; i < sparkCount; i++) {
       const s = this.pool.pop() || makeSpark();
-      
+
       // Zufällige Streuung
       const offset = new THREE.Vector3(
-        (Math.random() - 0.5) * 0.3,
-        (Math.random() - 0.5) * 0.3,
-        (Math.random() - 0.5) * 0.3
+        (Math.random() - 0.5) * 0.4,
+        (Math.random() - 0.5) * 0.4,
+        (Math.random() - 0.5) * 0.4
       );
       s.position.copy(point).add(offset);
-      
-      // Verschiedene Größen
-      const scale = 0.1 + Math.random() * 0.2;
+
+      // Verschiedene Größen basierend auf Intensität
+      const scale = (0.15 + Math.random() * 0.3) * intensity;
       s.scale.setScalar(scale);
-      
+
       // Zufällige Richtung basierend auf Normal
       const randomDir = normal.clone().add(new THREE.Vector3(
-        (Math.random() - 0.5) * 0.8,
-        (Math.random() - 0.5) * 0.8, 
-        (Math.random() - 0.5) * 0.8
+        (Math.random() - 0.5) * 1.2,
+        Math.random() * 0.8,  // Bevorzugt nach oben
+        (Math.random() - 0.5) * 1.2
       )).normalize();
       s.lookAt(point.clone().add(randomDir));
-      
-      s.userData.life = 0.05 + Math.random() * 0.08;
-      s.userData.velocity = randomDir.multiplyScalar(2 + Math.random() * 3);
-      s.userData.gravity = -9.8;
-      s.material.opacity = 0.9;
-      
+
+      s.userData.life = 0.08 + Math.random() * 0.15;
+      s.userData.velocity = randomDir.multiplyScalar(3 + Math.random() * 5);
+      s.userData.gravity = -12;
+      s.material.opacity = 0.95;
+
+      // Zufällige Farb-Variation
+      const colors = [0xffaa44, 0xff6644, 0xffdd88, 0xff8822];
+      s.material.color.setHex(colors[Math.floor(Math.random() * colors.length)]);
+
       this.scene.add(s);
       this.active.push(s);
     }
@@ -179,9 +238,9 @@ export class GameOverBanner3D {
     this.ctx = this.canvas.getContext('2d');
     this.buttonRect = {
       x: this.canvas.width * 0.5 - 190,
-      y: this.canvas.height * 0.6,
+      y: this.canvas.height * 0.75,  // Weiter nach unten verschoben
       w: 380,
-      h: 110
+      h: 80  // Etwas kleiner
     };
     this._draw();
 
@@ -208,12 +267,11 @@ export class GameOverBanner3D {
 
     const btnGeo = new THREE.PlaneGeometry(1, 1);
     const btnMat = new THREE.MeshBasicMaterial({
-      color: 0x2a66ff,
       transparent: true,
-      opacity: 0,
+      opacity: 0,  // Vollständig unsichtbar
       depthWrite: false,
       depthTest: false,
-      toneMapped: false
+      visible: false  // Material unsichtbar machen
     });
     this.buttonMesh = new THREE.Mesh(btnGeo, btnMat);
     this.buttonMesh.renderOrder = this.mesh.renderOrder + 1;
@@ -234,6 +292,10 @@ export class GameOverBanner3D {
     this.alpha = 0;
     this.scale = 0.85;
     this.mesh.scale.setScalar(this.scale);
+
+    // Hover-Effekt für Button
+    this.buttonHovered = false;
+    this.buttonHoverAlpha = 0;
   }
 
   _roundRect(ctx, x, y, w, h, r) {
@@ -265,13 +327,13 @@ export class GameOverBanner3D {
     ctx.textBaseline = 'middle';
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = 12;
-    ctx.fillText('GAME OVER', W / 2, H / 2 - 20);
+    ctx.fillText('GAME OVER', W / 2, H * 0.35);  // Weiter nach oben
 
     // Subtext
     ctx.shadowBlur = 0;
     ctx.fillStyle = this.subCol;
-    ctx.font = '500 40px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-    ctx.fillText('Drücke „Restart“ im Overlay oder rufe das Menü auf', W / 2, H / 2 + 72);
+    ctx.font = '500 32px system-ui, -apple-system, Segoe UI, Roboto, Arial';  // Etwas kleiner
+    ctx.fillText('Drücke „Restart" im Overlay oder beende VR', W / 2, H * 0.5);
 
     // VR Exit Button Hinweis
     const rect = this.buttonRect;
@@ -285,7 +347,7 @@ export class GameOverBanner3D {
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = '600 64px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.font = '600 48px system-ui, -apple-system, Segoe UI, Roboto, Arial';  // Etwas kleiner
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('VR beenden', rect.x + rect.w / 2, rect.y + rect.h / 2);
@@ -341,12 +403,25 @@ export class GameOverBanner3D {
       if (this.alpha <= 0) this.mesh.visible = false;
     }
 
+    // Hover-Effekt Animation
+    if (this.buttonHovered) {
+      this.buttonHoverAlpha = Math.min(0.3, this.buttonHoverAlpha + dt * 8);
+    } else {
+      this.buttonHoverAlpha = Math.max(0, this.buttonHoverAlpha - dt * 6);
+    }
+
     this.mesh.material.opacity = this.alpha;
     this.mesh.scale.setScalar(this.scale);
     if (this.buttonMesh) {
-      this.buttonMesh.material.opacity = this.alpha * 0.95;
+      // Button mit Hover-Effekt
+      this.buttonMesh.material.opacity = this.buttonHoverAlpha;
+      this.buttonMesh.material.color.setHex(this.buttonHovered ? 0x4488ff : 0x2a66ff);
       this.buttonMesh.visible = this.mesh.visible;
     }
+  }
+
+  setButtonHover(hovered) {
+    this.buttonHovered = hovered;
   }
 
   _updateButtonLayout(height) {
@@ -354,10 +429,13 @@ export class GameOverBanner3D {
     const rect = this.buttonRect;
     const worldWidth = this.width * (rect.w / this.canvas.width);
     const worldHeight = height * (rect.h / this.canvas.height);
+
+    // Korrekte Positionierung: Button sollte sichtbar unterhalb des Texts sein
     const centerX = (rect.x + rect.w * 0.5) / this.canvas.width - 0.5;
-    const centerY = (rect.y + rect.h * 0.5) / this.canvas.height - 0.5;
+    const centerY = -((rect.y + rect.h * 0.5) / this.canvas.height - 0.5);  // Y-Koordinate korrigiert
+
     this.buttonMesh.scale.set(worldWidth, worldHeight, 1);
-    this.buttonMesh.position.set(centerX * this.width, -centerY * height, 0.01);
+    this.buttonMesh.position.set(centerX * this.width, centerY * height, 0.01);
   }
 
   getInteractiveMeshes() {

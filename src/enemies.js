@@ -1,6 +1,246 @@
 // /src/enemies.js
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CONFIG } from './config.js';
+
+// Walker-Enemy Klasse für 3D-Animationen
+export class WalkerEnemy {
+  constructor(opts) {
+    this.scene = opts.scene;
+    this.target = opts.target;
+    this.hitFx = opts.hitFx || null;
+    this.explosions = opts.explosions || null;
+    this.environment = opts.environment || null;
+    this.onDeath = opts.onDeath || (()=>{});
+
+    this.health = opts.health ?? 60;  // Reduziert von 120 auf 60
+    this.speed = opts.speed ?? 1.5;   // Etwas langsamer für bessere Zielbarkeit
+    this.reward = opts.reward ?? 25;  // Proportional weniger Reward
+    this.radius = opts.hitRadius ?? 1.0; // Etwas kleinere Hitbox
+    this.attackRadius = opts.attackRadius ?? 3.0;
+
+    this.group = new THREE.Group();
+    this.group.position.copy(opts.spawnPos || new THREE.Vector3());
+
+    this.dead = false;
+    this.reached = false;
+    this.model = null;
+    this.mixer = null;
+    this.walkAction = null;
+
+    // Animation-Daten
+    this.animTime = 0;
+
+    // Walker laden
+    this.loadWalker();
+  }
+
+  async loadWalker() {
+    const loader = new GLTFLoader();
+
+    try {
+      console.log('Loading walker1.glb...');
+      const gltf = await new Promise((resolve, reject) => {
+        loader.load('./assets/animations/walker1.glb', resolve, undefined, reject);
+      });
+
+      this.model = gltf.scene;
+
+      // Skalierung auf 6 Meter Höhe
+      const box = new THREE.Box3().setFromObject(this.model);
+      const size = box.getSize(new THREE.Vector3());
+      const targetHeight = 6.0;
+      const scale = targetHeight / size.y;
+      this.model.scale.setScalar(scale);
+
+      // Position korrigieren (Füße auf dem Boden)
+      this.model.position.y = 0;
+
+      // Schatten aktivieren
+      this.model.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+          // Tag für Raycast
+          child.userData.enemy = true;
+          child.userData.enemyInstance = this;
+          child.userData.zone = 'core';
+        }
+      });
+
+      // Animation-Mixer
+      if (gltf.animations && gltf.animations.length > 0) {
+        this.mixer = new THREE.AnimationMixer(this.model);
+
+        // Erste Animation als Walk-Animation verwenden
+        this.walkAction = this.mixer.clipAction(gltf.animations[0]);
+        this.walkAction.play();
+        console.log('Walker animation started');
+      }
+
+      // Zusätzliche Hitbox für Kopfschüsse
+      const headHitbox = new THREE.Mesh(
+        new THREE.SphereGeometry(0.8, 12, 8),
+        new THREE.MeshBasicMaterial({ visible: false })
+      );
+      headHitbox.position.set(0, targetHeight * 0.8, 0);
+      headHitbox.userData.enemy = true;
+      headHitbox.userData.enemyInstance = this;
+      headHitbox.userData.zone = 'head';
+
+      this.group.add(this.model);
+      this.group.add(headHitbox);
+
+      // Walker zur Szene hinzufügen
+      this.scene.add(this.group);
+
+      console.log('Walker loaded successfully');
+
+    } catch (error) {
+      console.error('Error loading walker:', error);
+      // Fallback: einfache Box
+      this.createFallbackWalker();
+    }
+  }
+
+  createFallbackWalker() {
+    // Fallback falls Walker nicht lädt
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 6, 1.5),
+      new THREE.MeshStandardMaterial({
+        color: 0x4a1a4a,
+        emissive: 0x220022,
+        emissiveIntensity: 0.3,
+        metalness: 0.8,
+        roughness: 0.2
+      })
+    );
+    body.position.y = 3;
+    body.castShadow = true;
+    body.userData.enemy = true;
+    body.userData.enemyInstance = this;
+    body.userData.zone = 'core';
+
+    this.group.add(body);
+
+    // Fallback Walker zur Szene hinzufügen
+    this.scene.add(this.group);
+
+    console.log('Walker fallback created');
+  }
+
+  update(dt) {
+    if (this.dead || this.reached) return;
+
+    // Animation-Mixer updaten
+    if (this.mixer) {
+      this.mixer.update(dt);
+    }
+
+    // Bewegung zum Ziel
+    let direction = new THREE.Vector3().subVectors(this.target, this.group.position);
+    direction.y = 0; // Nur horizontale Bewegung
+    const distance = direction.length();
+
+    if (distance > this.attackRadius) {
+      direction.normalize();
+
+      // Obstacle Avoidance
+      if (this.environment && this.environment.obstacles) {
+        direction = this.avoidObstacles(direction);
+      }
+
+      // Walker rotieren in Bewegungsrichtung
+      if (this.model) {
+        const targetRotation = Math.atan2(direction.x, direction.z);
+        this.model.rotation.y = THREE.MathUtils.lerp(this.model.rotation.y, targetRotation, dt * 2);
+      }
+
+      // Bewegung
+      this.group.position.addScaledVector(direction, this.speed * dt);
+    } else {
+      this.reached = true;
+      this.onDeath?.({ type: 'base-hit', pos: this.group.position.clone() });
+    }
+  }
+
+  avoidObstacles(direction) {
+    // Vereinfachte Obstacle Avoidance für Walker
+    const ahead = this.group.position.clone().addScaledVector(direction, 3);
+
+    for (const obstacle of this.environment.obstacles) {
+      const dist = ahead.distanceTo(obstacle.position);
+      if (dist < obstacle.radius + 2) {
+        // Ausweichen
+        const avoidance = new THREE.Vector3()
+          .subVectors(ahead, obstacle.position)
+          .normalize()
+          .multiplyScalar(2);
+        direction.add(avoidance).normalize();
+        break;
+      }
+    }
+
+    return direction;
+  }
+
+  takeDamage(damage, zone = 'core') {
+    if (this.dead) return false;
+
+    const zoneMult = CONFIG.zones?.[zone]?.damageMul ?? 1.0;
+    const finalDamage = damage * zoneMult;
+
+    this.health -= finalDamage;
+
+    if (this.health <= 0) {
+      this.die(zone);
+      return true;
+    }
+
+    return false;
+  }
+
+  die(zone = 'core') {
+    if (this.dead) return;
+
+    this.dead = true;
+
+    // Explosion-Effekt
+    this.explosions?.createExplosion(this.group.position, 2.0, 0xff4444);
+
+    // Reward berechnen
+    const zoneBonus = CONFIG.zones?.[zone]?.scoreMul ?? 1.0;
+    const reward = Math.floor(this.reward * zoneBonus);
+
+    this.onDeath?.({
+      type: 'kill',
+      reward: reward,
+      zone: zone,
+      alive: -1
+    });
+
+    // Aus Szene entfernen
+    this.scene?.remove(this.group);
+  }
+
+  getHitMeshes() {
+    const meshes = [];
+    this.group.traverse((child) => {
+      if (child.userData.enemy) {
+        meshes.push(child);
+      }
+    });
+    return meshes;
+  }
+
+  dispose() {
+    if (this.mixer) {
+      this.mixer.stopAllAction();
+      this.mixer = null;
+    }
+    this.scene?.remove(this.group);
+  }
+}
 
 export class Enemy {
   constructor(type, opts) {
@@ -31,35 +271,54 @@ export class Enemy {
     
     switch(this.type) {
       case 'fast':
-        // Schlanker, schneller Gegner
+        // Schlanker, schneller Gegner - Neon-Grün mit starken Emissive-Eigenschaften
         body = new THREE.Mesh(
           new THREE.CapsuleGeometry(0.22, 0.45, 6, 12),
-          new THREE.MeshStandardMaterial({ color: 0x2f6f2f, metalness: 0.2, roughness: 0.6 })
+          new THREE.MeshStandardMaterial({
+            color: 0x1a8a1a,
+            emissive: 0x003300,
+            emissiveIntensity: 0.4,
+            metalness: 0.7,
+            roughness: 0.3
+          })
         );
-        bodyColor = 0x2f6f2f;
-        eyeColor = 0x66ff66;
-        emissiveColor = 0x004000;
+        bodyColor = 0x1a8a1a;
+        eyeColor = 0x00ff00;
+        emissiveColor = 0x008800;
         break;
-        
+
       case 'heavy':
-        // Massiver, schwerer Gegner
+        // Massiver, schwerer Gegner - Dunkel-Violett mit metallischem Glanz
         body = new THREE.Mesh(
           new THREE.CapsuleGeometry(0.4, 0.5, 8, 16),
-          new THREE.MeshStandardMaterial({ color: 0x6f2f6f, metalness: 0.3, roughness: 0.8 })
+          new THREE.MeshStandardMaterial({
+            color: 0x4a1a4a,
+            emissive: 0x220022,
+            emissiveIntensity: 0.3,
+            metalness: 0.8,
+            roughness: 0.2
+          })
         );
-        bodyColor = 0x6f2f6f;
-        eyeColor = 0xff66ff;
-        emissiveColor = 0x400040;
+        bodyColor = 0x4a1a4a;
+        eyeColor = 0xff00ff;
+        emissiveColor = 0x880088;
         break;
-        
+
       default: // grunt
+        // Standard Gegner - Warmes Rot mit mattem Finish
         body = new THREE.Mesh(
           new THREE.CapsuleGeometry(0.28, 0.35, 6, 12),
-          new THREE.MeshStandardMaterial({ color: 0x6f2f2f, metalness: 0.1, roughness: 0.7 })
+          new THREE.MeshStandardMaterial({
+            color: 0x8a2a2a,
+            emissive: 0x330000,
+            emissiveIntensity: 0.35,
+            metalness: 0.1,
+            roughness: 0.8
+          })
         );
-        bodyColor = 0x6f2f2f;
-        eyeColor = 0xff6666;
-        emissiveColor = 0x400000;
+        bodyColor = 0x8a2a2a;
+        eyeColor = 0xff3333;
+        emissiveColor = 0x660000;
         break;
     }
     
@@ -67,7 +326,13 @@ export class Enemy {
 
     eye = new THREE.Mesh(
       new THREE.SphereGeometry(this.type === 'heavy' ? 0.12 : 0.08, 12, 8),
-      new THREE.MeshStandardMaterial({ color: eyeColor, emissive: emissiveColor })
+      new THREE.MeshStandardMaterial({
+        color: eyeColor,
+        emissive: emissiveColor,
+        emissiveIntensity: 0.8,
+        metalness: 0.1,
+        roughness: 0.1
+      })
     );
     eye.position.set(0, body.position.y + (this.type === 'heavy' ? 0.22 : 0.18), this.type === 'heavy' ? 0.25 : 0.18);
 
@@ -381,21 +646,36 @@ export class EnemyManager {
       this.spawns.createSpawnEffect(spawnPos, enemyType);
     }
 
-    const enemy = new Enemy(enemyType, {
-      scene: this.scene,
-      target: this.center,
-      hitFx: this.hitFx,
-      explosions: this.explosions,
-      environment: this.environment,
-      spawnPos: spawnPos,
-      ground: true,
-      health: enemyData.health,
-      speed:  enemyData.speed,
-      reward: enemyData.reward,
-      attackRadius: this.cfg.attackRadius,
-      scale: enemyData.scale,
-      hitRadius: enemyData.hitRadius
-    });
+    // Walker für heavy enemies, normale Enemy für andere
+    const enemy = enemyType === 'heavy'
+      ? new WalkerEnemy({
+          scene: this.scene,
+          target: this.center,
+          hitFx: this.hitFx,
+          explosions: this.explosions,
+          environment: this.environment,
+          spawnPos: spawnPos,
+          health: enemyData.health,
+          speed: enemyData.speed,
+          reward: enemyData.reward,
+          attackRadius: this.cfg.attackRadius,
+          hitRadius: enemyData.hitRadius
+        })
+      : new Enemy(enemyType, {
+          scene: this.scene,
+          target: this.center,
+          hitFx: this.hitFx,
+          explosions: this.explosions,
+          environment: this.environment,
+          spawnPos: spawnPos,
+          ground: true,
+          health: enemyData.health,
+          speed: enemyData.speed,
+          reward: enemyData.reward,
+          attackRadius: this.cfg.attackRadius,
+          scale: enemyData.scale,
+          hitRadius: enemyData.hitRadius
+        });
 
     enemy.onDeath = ({ reward, zone }) => {
       this.alive = Math.max(0, this.alive - 1);

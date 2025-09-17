@@ -180,12 +180,12 @@ export const CONFIG = {
     },
     
     heavy: {
-      speed: 1.8,
-      health: 120,
-      reward: 30,
-      scale: 2.2,
-      hitRadius: 0.8,
-      spawnWeight: 0.1  // 10% Wahrscheinlichkeit
+      speed: 1.5,        // Langsamer für bessere Zielbarkeit
+      health: 60,        // Deutlich weniger HP
+      reward: 25,        // Proportional weniger Reward
+      scale: 2.2,        // Größe bleibt gleich
+      hitRadius: 1.0,    // Größere Hitbox zum Ausgleich
+      spawnWeight: 0.1   // 10% Wahrscheinlichkeit
     }
   },
 

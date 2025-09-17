@@ -48,6 +48,9 @@ export class EnvironmentManager {
       // Fallback: einfache Geometrie-Bäume
       this.createFallbackTrees(turretPosition);
     }
+
+    // Zusätzliche Umgebungselemente hinzufügen
+    this.addEnvironmentVariety(turretPosition);
   }
 
   loadModel(path) {
@@ -126,7 +129,7 @@ export class EnvironmentManager {
     
     this.scene.add(tree);
     this.trees.push(tree);
-    
+
     // Kollisionsobjekt für Pathfinding erstellen
     const obstacleRadius = treeScale * 0.2; // Baum-Kollisionsradius anhand des skalierten Modells
     this.obstacles.push({
@@ -134,6 +137,236 @@ export class EnvironmentManager {
       radius: obstacleRadius,
       type: 'tree'
     });
+  }
+
+  addEnvironmentVariety(turretPosition) {
+    // Felsen hinzufügen
+    this.addRocks(turretPosition);
+
+    // Kristalle hinzufügen
+    this.addCrystals(turretPosition);
+
+    // Metall-Strukturen hinzufügen
+    this.addMetalStructures(turretPosition);
+
+    // Nebel-Effekte hinzufügen
+    this.addFogClouds(turretPosition);
+  }
+
+  addRocks(turretPos) {
+    const rockConfigs = [
+      { distance: 35, angle: 45, scale: 0.8 },
+      { distance: 55, angle: 120, scale: 1.2 },
+      { distance: 40, angle: 220, scale: 0.6 },
+      { distance: 65, angle: 300, scale: 1.4 },
+      { distance: 45, angle: 30, scale: 0.9 },
+      { distance: 50, angle: 180, scale: 1.1 }
+    ];
+
+    rockConfigs.forEach(config => {
+      const rock = this.createRock(config.scale);
+      const angleRad = THREE.MathUtils.degToRad(config.angle);
+      const x = turretPos.x + Math.cos(angleRad) * config.distance;
+      const z = turretPos.z + Math.sin(angleRad) * config.distance;
+
+      rock.position.set(x, 0, z);
+      rock.rotation.y = Math.random() * Math.PI * 2;
+
+      this.scene.add(rock);
+      this.obstacles.push({
+        position: rock.position.clone(),
+        radius: config.scale * 3,
+        type: 'rock'
+      });
+    });
+  }
+
+  createRock(scale) {
+    const geometry = new THREE.SphereGeometry(2 * scale, 8, 6);
+    geometry.scale(1, 0.6, 1.2); // Unregelmäßig formen
+
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x4a5a6a,
+      roughness: 0.9,
+      metalness: 0.1
+    });
+
+    const rock = new THREE.Mesh(geometry, material);
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    rock.userData.obstacle = true;
+
+    return rock;
+  }
+
+  addCrystals(turretPos) {
+    const crystalConfigs = [
+      { distance: 70, angle: 80, scale: 1.0, color: 0x4488ff },
+      { distance: 85, angle: 160, scale: 0.8, color: 0xff4488 },
+      { distance: 75, angle: 250, scale: 1.2, color: 0x44ff88 },
+      { distance: 90, angle: 10, scale: 0.9, color: 0xffaa44 }
+    ];
+
+    crystalConfigs.forEach(config => {
+      const crystal = this.createCrystal(config.scale, config.color);
+      const angleRad = THREE.MathUtils.degToRad(config.angle);
+      const x = turretPos.x + Math.cos(angleRad) * config.distance;
+      const z = turretPos.z + Math.sin(angleRad) * config.distance;
+
+      crystal.position.set(x, 0, z);
+      this.scene.add(crystal);
+    });
+  }
+
+  createCrystal(scale, color) {
+    const geometry = new THREE.ConeGeometry(1.5 * scale, 4 * scale, 6);
+    const material = new THREE.MeshStandardMaterial({
+      color: color,
+      emissive: color,
+      emissiveIntensity: 0.2,
+      transparent: true,
+      opacity: 0.8,
+      roughness: 0.1,
+      metalness: 0.3
+    });
+
+    const crystal = new THREE.Mesh(geometry, material);
+    crystal.position.y = 2 * scale;
+    crystal.castShadow = true;
+    crystal.userData.crystal = true;
+
+    return crystal;
+  }
+
+  addMetalStructures(turretPos) {
+    const structureConfigs = [
+      { distance: 95, angle: 50, type: 'antenna' },
+      { distance: 100, angle: 130, type: 'pipes' },
+      { distance: 85, angle: 280, type: 'antenna' },
+      { distance: 110, angle: 350, type: 'pipes' }
+    ];
+
+    structureConfigs.forEach(config => {
+      let structure;
+      if (config.type === 'antenna') {
+        structure = this.createAntenna();
+      } else {
+        structure = this.createPipes();
+      }
+
+      const angleRad = THREE.MathUtils.degToRad(config.angle);
+      const x = turretPos.x + Math.cos(angleRad) * config.distance;
+      const z = turretPos.z + Math.sin(angleRad) * config.distance;
+
+      structure.position.set(x, 0, z);
+      structure.rotation.y = Math.random() * Math.PI * 2;
+      this.scene.add(structure);
+    });
+  }
+
+  createAntenna() {
+    const group = new THREE.Group();
+
+    // Basis
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.8, 1.2, 2, 8),
+      new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.8, roughness: 0.3 })
+    );
+    base.position.y = 1;
+
+    // Antenne
+    const antenna = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.05, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.1 })
+    );
+    antenna.position.y = 6;
+
+    // Leuchtspitze
+    const tip = new THREE.Mesh(
+      new THREE.SphereGeometry(0.15, 8, 6),
+      new THREE.MeshStandardMaterial({
+        color: 0xff4444,
+        emissive: 0x440000,
+        emissiveIntensity: 0.5
+      })
+    );
+    tip.position.y = 10.2;
+
+    group.add(base, antenna, tip);
+    group.traverse(node => {
+      if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+      }
+    });
+
+    return group;
+  }
+
+  createPipes() {
+    const group = new THREE.Group();
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x555577,
+      metalness: 0.7,
+      roughness: 0.4
+    });
+
+    // Drei Rohre in verschiedenen Höhen
+    for (let i = 0; i < 3; i++) {
+      const pipe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.3, 0.3, 3 + i, 8),
+        material
+      );
+      pipe.position.set(
+        (i - 1) * 1.5,
+        (3 + i) / 2,
+        0
+      );
+      group.add(pipe);
+    }
+
+    group.traverse(node => {
+      if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+      }
+    });
+
+    return group;
+  }
+
+  addFogClouds(turretPos) {
+    const cloudConfigs = [
+      { distance: 120, angle: 20, scale: 8 },
+      { distance: 130, angle: 100, scale: 6 },
+      { distance: 125, angle: 200, scale: 10 },
+      { distance: 135, angle: 320, scale: 7 }
+    ];
+
+    cloudConfigs.forEach(config => {
+      const cloud = this.createFogCloud(config.scale);
+      const angleRad = THREE.MathUtils.degToRad(config.angle);
+      const x = turretPos.x + Math.cos(angleRad) * config.distance;
+      const z = turretPos.z + Math.sin(angleRad) * config.distance;
+
+      cloud.position.set(x, 3, z);
+      this.scene.add(cloud);
+    });
+  }
+
+  createFogCloud(scale) {
+    const geometry = new THREE.SphereGeometry(scale, 8, 6);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x667788,
+      transparent: true,
+      opacity: 0.3,
+      fog: false
+    });
+
+    const cloud = new THREE.Mesh(geometry, material);
+    cloud.userData.fog = true;
+
+    return cloud;
   }
 
   createFallbackTrees(turretPos) {

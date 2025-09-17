@@ -56,6 +56,15 @@ export class GunSystem {
     return this.renderer.xr.isPresenting ? this.renderer.xr.getCamera(this.camera) : this.camera;
   }
 
+  isGameOver() {
+    // Check if game over state is active - simplified check
+    try {
+      return window.isGameOver === true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   update(dt) {
     this.timeSinceShot += dt;
     if (this.coolDelay > 0) this.coolDelay -= dt;
@@ -71,8 +80,8 @@ export class GunSystem {
     // UI
     this.heatUI?.setHeat01(this.heat / CONFIG.fire.overheatThreshold);
 
-    // Schießen
-    if (!this.overheated && this.isFiring() && this.timeSinceShot >= this.shotInterval) {
+    // Schießen (nur wenn nicht Game Over)
+    if (!this.overheated && this.isFiring() && this.timeSinceShot >= this.shotInterval && !this.isGameOver()) {
       this.fireOneShot();
       this.timeSinceShot = 0;
       this.coolDelay = CONFIG.fire.cooldownDelay;
