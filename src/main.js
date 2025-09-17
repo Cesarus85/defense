@@ -47,6 +47,12 @@ let baseEl = null;
 let isGameOver = false;
 let gameOverEl = null; // DOM-Overlay (Desktop), in VR ggf. unsichtbar
 
+const xrControllers = [];
+const xrRaycaster = new THREE.Raycaster();
+const xrRayOrigin = new THREE.Vector3();
+const xrRayDir = new THREE.Vector3();
+const xrRayQuat = new THREE.Quaternion();
+
 // Delta-Baseline (nur für controlMode='delta')
 let baseTurretYaw = 0, baseTurretPitch = 0;
 let hadRef = false;
@@ -127,7 +133,15 @@ function init() {
   input = createInput(renderer, scene, camera, { handles: { left: turret.leftHandle, right: turret.rightHandle } });
 
   // VR: nach Sessionstart sauber vor den Spieler platzieren
-  renderer.xr.addEventListener('sessionstart', () => { needPlaceFromHMD = true; resetDeltaBaseline(); });
+  renderer.xr.addEventListener('sessionstart', () => {
+    needPlaceFromHMD = true;
+    resetDeltaBaseline();
+    if (gameOverEl) gameOverEl.style.display = 'none';
+    setupXRExitInteraction();
+  });
+  renderer.xr.addEventListener('sessionend', () => {
+    if (isGameOver && gameOverEl) gameOverEl.style.display = 'flex';
+  });
 
   // Desktop: initial platzieren
   placeTurretFromCamera(getCurrentCamera());
@@ -140,6 +154,8 @@ function init() {
   initScoreUI();
   initBaseUI();
   initGameOverUI();
+
+  setupXRExitInteraction();
 
   // Enemies
   initEnemies();
@@ -329,7 +345,7 @@ function gameOver() {
     enemyMgr.clearAll();
   }
   // DOM-Overlay (Desktop)
-  if (gameOverEl) gameOverEl.style.display = 'flex';
+  if (gameOverEl) gameOverEl.style.display = renderer.xr.isPresenting ? 'none' : 'flex';
   // 3D-Banner (sichtbar in VR)
   STEP2.gameOver3D?.show(getCurrentCamera());
 }
@@ -502,4 +518,37 @@ function placeTurretFromCamera(cam) {
   turret.pitchPivot.rotation.x = 0;
 
   resetDeltaBaseline();
+}
+
+function setupXRExitInteraction() {
+  for (let i = 0; i < 2; i++) {
+    const controller = renderer.xr.getController(i);
+    if (!controller) continue;
+    if (!xrControllers.includes(controller)) {
+      controller.addEventListener('selectstart', onXRSelectStart);
+      xrControllers.push(controller);
+    }
+  }
+}
+
+function onXRSelectStart(event) {
+  if (!renderer.xr.isPresenting) return;
+  if (!STEP2.gameOver3D?.isInteractive()) return;
+
+  const meshes = STEP2.gameOver3D.getInteractiveMeshes?.();
+  if (!meshes || meshes.length === 0) return;
+
+  const controller = event.target;
+  controller.getWorldPosition(xrRayOrigin);
+  controller.getWorldQuaternion(xrRayQuat);
+  xrRayDir.set(0, 0, -1).applyQuaternion(xrRayQuat).normalize();
+
+  xrRaycaster.set(xrRayOrigin, xrRayDir);
+  const intersections = xrRaycaster.intersectObjects(meshes, false);
+  if (intersections.length === 0) return;
+
+  const first = intersections[0].object;
+  if (first?.userData?.action === 'exit-vr') {
+    renderer.xr.getSession()?.end();
+  }
 }
