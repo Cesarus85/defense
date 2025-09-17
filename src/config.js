@@ -90,6 +90,12 @@ export const CONFIG = {
       size: [0.20, 0.025],         // Kompakter
       background: 0x10161f,
       fill: 0x93b5ff
+    },
+    baseBar: {
+      offset: [0.16, 0.18, 0.08],
+      size: [0.05, 0.18],
+      background: 0x1a1010,
+      fill: 0xff6666
     }
   },
 
