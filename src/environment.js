@@ -60,6 +60,9 @@ export class EnvironmentManager {
   }
 
   placeTrees(tree1Model, tree2Model, turretPos) {
+    // Basisskalierung, um die Modellgröße in etwa Meterhöhe umzusetzen
+    const TREE_BASE_SCALE = 11;
+
     const configs = [
       // Ring 1: Mittlere Entfernung (40-60m vom Turret)
       { distance: 45, angle: 30, model: tree1Model, scale: 1.2 },
@@ -104,7 +107,8 @@ export class EnvironmentManager {
     const z = turretPos.z + Math.sin(angleRad) * config.distance;
     
     tree.position.set(x, 0, z);
-    tree.scale.setScalar(config.scale);
+    const treeScale = config.scale * TREE_BASE_SCALE;
+    tree.scale.setScalar(treeScale);
     
     // Zufällige Y-Rotation für Variation
     tree.rotation.y = Math.random() * Math.PI * 2;
@@ -124,7 +128,7 @@ export class EnvironmentManager {
     this.trees.push(tree);
     
     // Kollisionsobjekt für Pathfinding erstellen
-    const obstacleRadius = config.scale * 2.0; // Baum-Kollisionsradius
+    const obstacleRadius = treeScale * 0.2; // Baum-Kollisionsradius anhand des skalierten Modells
     this.obstacles.push({
       position: new THREE.Vector3(x, 0, z),
       radius: obstacleRadius,
