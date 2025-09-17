@@ -310,8 +310,13 @@ export class GameOverBanner3D {
 
   _reposition(camera) {
     if (!camera) return;
-    const camPos = new THREE.Vector3(); camera.getWorldPosition(camPos);
-    const camQuat = new THREE.Quaternion(); camera.getWorldQuaternion(camQuat);
+
+    const sourceCamera = (camera.isArrayCamera && camera.cameras && camera.cameras.length > 0)
+      ? camera.cameras[0]
+      : camera;
+
+    const camPos = new THREE.Vector3(); sourceCamera.getWorldPosition(camPos);
+    const camQuat = new THREE.Quaternion(); sourceCamera.getWorldQuaternion(camQuat);
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat).normalize();
     const up  = new THREE.Vector3(0, 1, 0).applyQuaternion(camQuat).normalize();
 
