@@ -177,6 +177,12 @@ export class GameOverBanner3D {
     this.canvas.width = 1024;
     this.canvas.height = 384;
     this.ctx = this.canvas.getContext('2d');
+    this.buttonRect = {
+      x: this.canvas.width * 0.5 - 190,
+      y: this.canvas.height * 0.6,
+      w: 380,
+      h: 110
+    };
     this._draw();
 
     const tex = new THREE.CanvasTexture(this.canvas);
@@ -185,6 +191,7 @@ export class GameOverBanner3D {
 
     const aspect = this.canvas.height / this.canvas.width;
     const height = this.width * aspect;
+    this.panelHeight = height;
 
     const geo = new THREE.PlaneGeometry(this.width, height);
     const mat = new THREE.MeshBasicMaterial({
@@ -198,6 +205,29 @@ export class GameOverBanner3D {
     this.mesh.visible = false;
     this.mesh.renderOrder = 999;
     this.scene.add(this.mesh);
+
+    const btnGeo = new THREE.PlaneGeometry(1, 1);
+    const btnMat = new THREE.MeshBasicMaterial({
+      color: 0x2a66ff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      depthTest: false,
+      toneMapped: false
+    });
+    this.buttonMesh = new THREE.Mesh(btnGeo, btnMat);
+    this.buttonMesh.renderOrder = this.mesh.renderOrder + 1;
+    this.buttonMesh.userData = {
+      ignoreHit: false,
+      interactive: true,
+      action: 'exit-vr',
+      collider: 'plane'
+    };
+    this.buttonMesh.visible = false;
+    this.mesh.add(this.buttonMesh);
+
+    this.interactiveMeshes = [this.buttonMesh];
+    this._updateButtonLayout(height);
 
     // Simple Show/Hide-Animation
     this.visible = false;
@@ -243,6 +273,23 @@ export class GameOverBanner3D {
     ctx.font = '500 40px system-ui, -apple-system, Segoe UI, Roboto, Arial';
     ctx.fillText('Drücke „Restart“ im Overlay oder rufe das Menü auf', W / 2, H / 2 + 72);
 
+    // VR Exit Button Hinweis
+    const rect = this.buttonRect;
+    ctx.fillStyle = 'rgba(42,102,255,0.95)';
+    this._roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 24);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 6;
+    this._roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 24);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '600 64px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('VR beenden', rect.x + rect.w / 2, rect.y + rect.h / 2);
+
     if (this.tex) this.tex.needsUpdate = true;
   }
 
@@ -251,12 +298,14 @@ export class GameOverBanner3D {
     this.alpha = 0;
     this.scale = 0.85;
     this.mesh.visible = true;
+    this.buttonMesh.visible = true;
     this._reposition(camera);
   }
 
   hide() {
     this.visible = false;
     this.mesh.visible = false;
+    this.buttonMesh.visible = false;
   }
 
   _reposition(camera) {
@@ -289,6 +338,29 @@ export class GameOverBanner3D {
 
     this.mesh.material.opacity = this.alpha;
     this.mesh.scale.setScalar(this.scale);
+    if (this.buttonMesh) {
+      this.buttonMesh.material.opacity = this.alpha * 0.95;
+      this.buttonMesh.visible = this.mesh.visible;
+    }
+  }
+
+  _updateButtonLayout(height) {
+    if (!this.buttonMesh) return;
+    const rect = this.buttonRect;
+    const worldWidth = this.width * (rect.w / this.canvas.width);
+    const worldHeight = height * (rect.h / this.canvas.height);
+    const centerX = (rect.x + rect.w * 0.5) / this.canvas.width - 0.5;
+    const centerY = (rect.y + rect.h * 0.5) / this.canvas.height - 0.5;
+    this.buttonMesh.scale.set(worldWidth, worldHeight, 1);
+    this.buttonMesh.position.set(centerX * this.width, -centerY * height, 0.01);
+  }
+
+  getInteractiveMeshes() {
+    return this.interactiveMeshes;
+  }
+
+  isInteractive() {
+    return this.mesh.visible && this.alpha > 0.05;
   }
 }
 
