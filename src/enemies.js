@@ -544,6 +544,547 @@ export class Enemy {
   }
 }
 
+// TieFighter Aerial Enemy Class
+export class TieFighterEnemy {
+  constructor(opts) {
+    this.scene = opts.scene;
+    this.target = opts.target;
+    this.hitFx = opts.hitFx || null;
+    this.explosions = opts.explosions || null;
+    this.onDeath = opts.onDeath || (()=>{});
+    this.onPlayerHit = opts.onPlayerHit || (()=>{});
+
+    this.health = opts.health ?? 30;
+    this.speed = opts.speed ?? 8.0; // Schneller Luftgegner
+    this.reward = opts.reward ?? 20;
+    this.radius = opts.hitRadius ?? 0.8;
+    this.attackRadius = 0; // Kein Kollisionsschaden
+
+    this.group = new THREE.Group();
+    this.group.position.copy(opts.spawnPos || new THREE.Vector3());
+
+    this.dead = false;
+    this.disposed = false;
+    this.model = null;
+    this.mixer = null;
+
+    // Flugverhalten
+    this.flightPhase = 'approach'; // 'approach', 'attack', 'flyover', 'loop', 'return'
+    this.flightTime = 0;
+    this.attackStartPos = new THREE.Vector3();
+    this.loopDirection = Math.random() > 0.5 ? 1 : -1; // Links oder rechts
+    this.lastShotTime = 0;
+    this.shotInterval = 0.3; // Alle 0.3 Sekunden schießen
+    this.attackDistance = 25; // Größere Distanz vom Spieler wo er anfängt zu schießen
+    this.pullAwayDistance = 12; // Distanz bei der er abdrehen soll
+
+    // Bewegungsgarantie - TieFighter muss sich IMMER bewegen
+    this.lastPosition = new THREE.Vector3();
+    this.stuckCounter = 0;
+    this.forceMovement = false;
+
+    // Laser-System
+    this.laserBeams = [];
+    this.maxLasers = 5;
+
+    this.loadTieFighter();
+  }
+
+  async loadTieFighter() {
+    const loader = new GLTFLoader();
+
+    try {
+      console.log('Loading tiefighter.glb...');
+      const gltf = await new Promise((resolve, reject) => {
+        loader.load('./assets/animations/tiefighter.glb', resolve, undefined, reject);
+      });
+
+      this.model = gltf.scene;
+
+      // Skalierung - TieFighter sollte etwa 2-3 Meter groß sein
+      const box = new THREE.Box3().setFromObject(this.model);
+      const size = box.getSize(new THREE.Vector3());
+      const targetSize = 2.5;
+      const scale = targetSize / Math.max(size.x, size.y, size.z);
+      this.model.scale.setScalar(scale);
+
+      // Material-Anpassungen für bessere Sichtbarkeit
+      this.model.traverse(child => {
+        if (child.isMesh) {
+          if (child.material) {
+            try {
+              if (Array.isArray(child.material)) {
+                child.material.forEach(mat => {
+                  if (mat && mat.emissive) {
+                    mat.emissive.setHex(0x222244);
+                    mat.emissiveIntensity = 0.3;
+                  }
+                });
+              } else {
+                if (child.material.emissive) {
+                  child.material.emissive.setHex(0x222244);
+                  child.material.emissiveIntensity = 0.3;
+                }
+              }
+            } catch (e) {
+              console.warn('TieFighter material setup error:', e);
+            }
+          }
+          child.userData = child.userData || {};
+          child.userData.enemy = this;
+          child.userData.zone = 'core';
+        }
+      });
+
+      // Animation Mixer falls Animationen vorhanden
+      try {
+        if (gltf.animations && gltf.animations.length > 0) {
+          this.mixer = new THREE.AnimationMixer(this.model);
+          const action = this.mixer.clipAction(gltf.animations[0]);
+          if (action && typeof action.play === 'function') {
+            action.play();
+          }
+        }
+      } catch (e) {
+        console.warn('TieFighter animation setup error:', e);
+      }
+
+      this.group.add(this.model);
+      if (this.scene && typeof this.scene.add === 'function') {
+        this.scene.add(this.group);
+      }
+
+      // Startposition in der Luft setzen
+      if (this.group && this.group.position) {
+        this.group.position.y = Math.max(this.group.position.y, 15);
+        // Bewegungsüberwachung initialisieren
+        this.lastPosition.copy(this.group.position);
+      }
+
+    } catch (error) {
+      console.error('Failed to load tiefighter.glb:', error);
+    }
+  }
+
+  createLaserBeam(start, end) {
+    const direction = end.clone().sub(start).normalize();
+    const distance = start.distanceTo(end);
+
+    // Laser-Geometrie
+    const geometry = new THREE.CylinderGeometry(0.02, 0.02, distance, 8);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xff4444,
+      emissive: 0xff2222,
+      emissiveIntensity: 0.8,
+      transparent: true,
+      opacity: 0.9
+    });
+
+    const laser = new THREE.Mesh(geometry, material);
+
+    // Position und Rotation des Lasers
+    laser.position.copy(start).add(end).multiplyScalar(0.5);
+    laser.lookAt(end);
+    laser.rotateX(Math.PI / 2);
+
+    // Laser-Eigenschaften
+    laser.userData.isLaser = true;
+    laser.userData.lifeTime = 0.2; // 200ms Lebensdauer
+    laser.userData.damage = 15;
+
+    this.scene.add(laser);
+    this.laserBeams.push(laser);
+
+    // Alte Laser entfernen
+    if (this.laserBeams.length > this.maxLasers) {
+      const oldLaser = this.laserBeams.shift();
+      this.scene.remove(oldLaser);
+    }
+
+    return laser;
+  }
+
+  fireLaser() {
+    if (!this.model || this.dead) return;
+
+    const fighterPos = this.group.position.clone();
+    const targetPos = this.target.clone();
+    targetPos.y += 1; // Auf Spielerhöhe zielen
+
+    // Laser von der Position des TieFighters zum Spieler
+    const laser = this.createLaserBeam(fighterPos, targetPos);
+
+    // Treffer-Check per Raycast
+    const raycaster = new THREE.Raycaster();
+    const direction = targetPos.clone().sub(fighterPos).normalize();
+    raycaster.set(fighterPos, direction);
+    raycaster.far = fighterPos.distanceTo(targetPos) + 2;
+
+    // Prüfe Treffer am Spieler (vereinfacht)
+    const distance = fighterPos.distanceTo(targetPos);
+    if (distance < 50) { // Nur wenn nah genug
+      // 20% Trefferchance bei Bewegung des TieFighters
+      if (Math.random() < 0.2) {
+        this.onPlayerHit({ damage: 15, source: 'tiefighter' });
+      }
+    }
+  }
+
+  updateLasers(dt) {
+    if (!this.laserBeams || !Array.isArray(this.laserBeams)) return;
+
+    for (let i = this.laserBeams.length - 1; i >= 0; i--) {
+      const laser = this.laserBeams[i];
+      if (!laser || !laser.userData) continue;
+
+      laser.userData.lifeTime -= dt;
+
+      if (laser.userData.lifeTime <= 0) {
+        try {
+          if (this.scene && typeof this.scene.remove === 'function') {
+            this.scene.remove(laser);
+          }
+        } catch (e) {
+          console.warn('TieFighter laser remove error:', e);
+        }
+        this.laserBeams.splice(i, 1);
+      } else {
+        try {
+          // Fade-out Effekt
+          const alpha = laser.userData.lifeTime / 0.2;
+          if (laser.material && typeof laser.material.opacity !== 'undefined') {
+            laser.material.opacity = alpha * 0.9;
+          }
+        } catch (e) {
+          console.warn('TieFighter laser fade error:', e);
+        }
+      }
+    }
+  }
+
+  update(dt) {
+    if (this.dead) {
+      console.log('TieFighter update: DEAD, skipping');
+      return;
+    }
+    if (!this.group) {
+      console.log('TieFighter update: NO GROUP, waiting...');
+      return; // Warte bis Group erstellt ist
+    }
+    if (!this.group.position) {
+      console.log('TieFighter update: NO POSITION, non-movement update only');
+      // Group exists but no position yet - only update non-movement things
+      if (this.mixer) {
+        try {
+          this.mixer.update(dt);
+        } catch (e) {
+          console.warn('TieFighter mixer update error:', e);
+        }
+      }
+      this.updateLasers(dt);
+      return;
+    }
+
+    // Log movement status für debugging
+    if (Math.random() < 0.1) { // Nur 10% der Zeit loggen um nicht zu spammen
+      console.log(`TieFighter update: Health=${this.health}, Phase=${this.flightPhase}, Pos=${this.group.position.x.toFixed(1)},${this.group.position.y.toFixed(1)},${this.group.position.z.toFixed(1)}`);
+    }
+
+    this.flightTime += dt;
+
+    // Animation Mixer updaten
+    if (this.mixer) {
+      try {
+        this.mixer.update(dt);
+      } catch (e) {
+        console.warn('TieFighter mixer update error:', e);
+      }
+    }
+
+    // Laser-System updaten
+    this.updateLasers(dt);
+
+    if (!this.target) return; // Sicherheitscheck
+
+    const goalPos = this.target.clone();
+    const currentPos = this.group.position.clone();
+    const distToTarget = currentPos.distanceTo(goalPos);
+
+    // Bewegungsüberwachung - TieFighter darf NIEMALS stillstehen
+    const moveDistance = currentPos.distanceTo(this.lastPosition);
+    if (moveDistance < 0.1) { // Weniger als 10cm in einem Frame
+      this.stuckCounter += 1;
+      if (this.stuckCounter > 10) { // 10 Frames stillgestanden
+        console.warn('TieFighter stuck! Forcing movement...');
+        this.forceMovement = true;
+        this.stuckCounter = 0;
+      }
+    } else {
+      this.stuckCounter = 0;
+      this.forceMovement = false;
+    }
+    this.lastPosition.copy(currentPos);
+
+    // Notfall-Bewegung wenn TieFighter hängt
+    if (this.forceMovement) {
+      const escapeDirection = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        0.5,
+        (Math.random() - 0.5) * 2
+      ).normalize();
+      this.group.position.addScaledVector(escapeDirection, this.speed * dt);
+      console.log('Emergency movement applied!');
+    }
+
+    // Flugverhalten basierend auf Phase
+    switch (this.flightPhase) {
+      case 'approach':
+        this.handleApproachPhase(dt, goalPos, currentPos, distToTarget);
+        break;
+      case 'attack':
+        this.handleAttackPhase(dt, goalPos, currentPos, distToTarget);
+        break;
+      case 'flyover':
+        this.handleFlyoverPhase(dt, goalPos, currentPos);
+        break;
+      case 'loop':
+        this.handleLoopPhase(dt, goalPos, currentPos);
+        break;
+      case 'return':
+        this.handleReturnPhase(dt, goalPos, currentPos);
+        break;
+    }
+
+    // Immer nach vorne schauen (Flugrichtung)
+    if (this.model) {
+      const forward = new THREE.Vector3(0, 0, -1);
+      const velocity = this.lastVelocity || forward;
+      if (velocity.length() > 0.1) {
+        this.group.lookAt(currentPos.clone().add(velocity));
+      }
+    }
+  }
+
+  handleApproachPhase(dt, goalPos, currentPos, distToTarget) {
+    // Auf den Spieler zufliegen
+    const direction = goalPos.clone().sub(currentPos).normalize();
+    direction.y = Math.max(-0.2, direction.y); // Nicht zu steil nach unten
+
+    this.group.position.addScaledVector(direction, this.speed * dt);
+    this.lastVelocity = direction;
+
+    // Wenn nah genug, in Angriffsphase wechseln
+    if (distToTarget < this.attackDistance) {
+      this.flightPhase = 'attack';
+      this.flightTime = 0;
+      this.attackStartPos.copy(currentPos);
+    }
+  }
+
+  handleAttackPhase(dt, goalPos, currentPos, distToTarget) {
+    // Weiter auf Spieler zufliegen aber langsamer
+    const direction = goalPos.clone().sub(currentPos).normalize();
+    this.group.position.addScaledVector(direction, this.speed * 0.6 * dt);
+    this.lastVelocity = direction;
+
+    // Schießen
+    this.lastShotTime += dt;
+    if (this.lastShotTime >= this.shotInterval) {
+      this.fireLaser();
+      this.lastShotTime = 0;
+    }
+
+    // Früher abdrehen um zu nah kommen zu vermeiden
+    if (this.flightTime > 1.5 || distToTarget < this.pullAwayDistance) {
+      this.flightPhase = Math.random() > 0.5 ? 'flyover' : 'loop';
+      this.flightTime = 0;
+    }
+  }
+
+  handleFlyoverPhase(dt, goalPos, currentPos) {
+    // Sanfte Kurve über den Spieler hinweg
+    const distToPlayer = currentPos.distanceTo(goalPos);
+
+    if (distToPlayer > this.pullAwayDistance) {
+      // Noch nah genug - sanft hochziehen und zur Seite
+      const sideDirection = this.loopDirection; // Bereits gesetzt bei Erstellung
+      const flyDirection = new THREE.Vector3(sideDirection * 0.7, 0.4, 0.8).normalize();
+      this.group.position.addScaledVector(flyDirection, this.speed * 1.1 * dt);
+      this.lastVelocity = flyDirection;
+    } else {
+      // Weit genug weg - weiter in weitem Bogen
+      const wideDirection = new THREE.Vector3(this.loopDirection * 1.2, 0.2, 1.0).normalize();
+      this.group.position.addScaledVector(wideDirection, this.speed * 1.3 * dt);
+      this.lastVelocity = wideDirection;
+    }
+
+    // Nach 4 Sekunden zurückkehren (länger für weiteren Bogen)
+    if (this.flightTime > 4.0) {
+      this.flightPhase = 'return';
+      this.flightTime = 0;
+    }
+  }
+
+  handleLoopPhase(dt, goalPos, currentPos) {
+    // Größere seitliche Schleife mit mehr Abstand
+    const angle = this.flightTime * 1.5; // Etwas langsamer für saubere Kurve
+    const radius = 35; // Größerer Radius für weiteren Abstand
+    const loopCenter = goalPos.clone().add(new THREE.Vector3(this.loopDirection * 15, 12, 25)); // Weiter weg vom Spieler
+
+    const newPos = new THREE.Vector3(
+      loopCenter.x + Math.cos(angle) * radius * this.loopDirection,
+      loopCenter.y + Math.sin(angle) * radius * 0.4, // Höhere vertikale Komponente
+      loopCenter.z + Math.sin(angle) * radius * 0.6  // Mehr Tiefe in der Kurve
+    );
+
+    const direction = newPos.clone().sub(currentPos).normalize();
+    this.group.position.addScaledVector(direction, this.speed * 0.9 * dt); // Etwas langsamer für kontrolliertere Kurve
+    this.lastVelocity = direction;
+
+    // Nach einer vollständigen Schleife zurückkehren
+    if (this.flightTime > (Math.PI * 1.3)) { // Etwas länger für vollständige Kurve
+      this.flightPhase = 'return';
+      this.flightTime = 0;
+    }
+  }
+
+  handleReturnPhase(dt, goalPos, currentPos) {
+    // Weit wegfliegen für neuen Angriff aus größerer Distanz
+    if (!this.returnPosition) {
+      // Neue Position nur einmal berechnen für konsistente Bewegung
+      const distance = 60 + Math.random() * 30; // 60-90 Meter Entfernung
+      const angle = Math.random() * Math.PI * 2;
+      this.returnPosition = goalPos.clone().add(new THREE.Vector3(
+        Math.sin(angle) * distance,
+        18 + Math.random() * 12, // 18-30 Meter Höhe
+        Math.cos(angle) * distance
+      ));
+    }
+
+    const direction = this.returnPosition.clone().sub(currentPos).normalize();
+    this.group.position.addScaledVector(direction, this.speed * 0.9 * dt);
+    this.lastVelocity = direction;
+
+    // Wenn nah genug an Return-Position oder nach 5 Sekunden, neuen Angriff starten
+    const distToReturn = currentPos.distanceTo(this.returnPosition);
+    if (this.flightTime > 5.0 || distToReturn < 10) {
+      this.flightPhase = 'approach';
+      this.flightTime = 0;
+      this.returnPosition = null; // Reset für nächsten Return
+    }
+  }
+
+  takeDamage(amount = 0, zone = 'core') {
+    if (this.dead) {
+      console.log('TieFighter takeDamage called but already DEAD!');
+      return;
+    }
+
+    const mul = (CONFIG?.zones?.[zone]?.damageMul ?? 1.0);
+    const actualDamage = amount * mul;
+    const newHealth = this.health - actualDamage;
+
+    console.log(`TieFighter HIT! Health: ${this.health} -> ${newHealth} (damage: ${amount} x ${mul} = ${actualDamage}), Zone: ${zone}, Phase: ${this.flightPhase}`);
+
+    this.health = newHealth;
+
+    // TieFighter soll weiter fliegen auch wenn getroffen - kein Movement-Stop!
+
+    if (this.health <= 0) {
+      console.log('TieFighter DYING! Health below 0, disposing...');
+      this.dead = true;
+
+      // Sichere Position ermitteln
+      let p = new THREE.Vector3();
+      try {
+        if (this.group && this.group.getWorldPosition) {
+          p = this.group.getWorldPosition(new THREE.Vector3());
+        } else if (this.group && this.group.position) {
+          p.copy(this.group.position);
+        }
+      } catch (e) {
+        console.warn('TieFighter position error:', e);
+        p.set(0, 10, 0); // Fallback position
+      }
+
+      // Explosion beim Tod
+      console.log('TieFighter creating explosion at:', p);
+      if (this.explosions && typeof this.explosions.spawnAt === 'function') {
+        try {
+          this.explosions.spawnAt(p, 2.0); // Größere Explosion
+          console.log('TieFighter explosion created successfully');
+        } catch (e) {
+          console.warn('TieFighter explosion error:', e);
+        }
+      } else {
+        console.warn('TieFighter: No explosion system available - using hitFx instead');
+        // Fallback: Verwende hitFx für visuellen Effekt
+        if (this.hitFx && typeof this.hitFx.spawnAt === 'function') {
+          for (let i = 0; i < 15; i++) {
+            const offset = new THREE.Vector3(
+              (Math.random() - 0.5) * 3,
+              (Math.random() - 0.5) * 3,
+              (Math.random() - 0.5) * 3
+            );
+            this.hitFx.spawnAt(p.clone().add(offset), offset.normalize());
+          }
+        }
+      }
+
+      // Reward
+      if (this.onDeath && typeof this.onDeath === 'function') {
+        try {
+          this.onDeath({
+            type: 'kill',
+            reward: this.reward,
+            zone: zone,
+            enemy: this
+          });
+        } catch (e) {
+          console.warn('TieFighter onDeath error:', e);
+        }
+      }
+
+      // Sofort entfernen aus dem Spiel
+      this.dispose();
+
+      // KRITISCH: Bewegung sofort stoppen
+      return; // Keine weitere Verarbeitung!
+    }
+  }
+
+  dispose() {
+    console.log('TieFighter dispose() called');
+    if (this.disposed) {
+      console.log('TieFighter dispose: already disposed, skipping');
+      return; // Verhindert mehrfache Disposal
+    }
+    this.disposed = true;
+
+    try {
+      // Alle Laser entfernen
+      if (this.laserBeams && Array.isArray(this.laserBeams)) {
+        this.laserBeams.forEach(laser => {
+          if (laser && this.scene && typeof this.scene.remove === 'function') {
+            this.scene.remove(laser);
+          }
+        });
+        this.laserBeams = [];
+      }
+
+      // Gruppe aus Szene entfernen
+      if (this.group && this.scene && typeof this.scene.remove === 'function') {
+        this.scene.remove(this.group);
+      }
+    } catch (e) {
+      console.warn('TieFighter dispose error:', e);
+    }
+
+    this.dead = true;
+    console.log('TieFighter dispose: COMPLETED, marked as dead');
+  }
+}
+
 export class EnemyManager {
   /**
    * @param {THREE.Scene} scene
@@ -594,9 +1135,9 @@ export class EnemyManager {
 
   _selectEnemyType() {
     // Gewichtete Zufallsauswahl der Gegnertypen
-    const types = ['grunt', 'fast', 'heavy'];
+    const types = ['grunt', 'fast', 'heavy', 'tiefighter'];
     const weights = types.map(type => this.cfg[type]?.spawnWeight || 0);
-    
+
     // Ab Wave 3 mehr variety, ab Wave 5 auch Heavy enemies häufiger
     if (this.wave >= 3) {
       weights[1] *= 1.5; // Mehr fast enemies
@@ -604,17 +1145,22 @@ export class EnemyManager {
     if (this.wave >= 5) {
       weights[2] *= 2.0; // Mehr heavy enemies
     }
-    
+
+    // TieFighter ab Welle 1, aber häufiger ab Welle 2
+    if (this.wave >= 2) {
+      weights[3] *= 1.3; // Mehr TieFighter ab Welle 2
+    }
+
     const totalWeight = weights.reduce((sum, w) => sum + w, 0);
     let random = Math.random() * totalWeight;
-    
+
     for (let i = 0; i < types.length; i++) {
       random -= weights[i];
       if (random <= 0) {
         return types[i];
       }
     }
-    
+
     return 'grunt'; // Fallback
   }
 
@@ -625,15 +1171,24 @@ export class EnemyManager {
 
     // Freie Spawn-Position finden (berücksichtigt Bäume)
     let spawnPos;
-    if (this.environment) {
-      // Environment-Manager findet freie Position
+
+    if (enemyType === 'tiefighter') {
+      // TieFighter spawnt in der Luft, weit weg
+      const r = this.cfg.spawnRadius + 30 + (Math.random() * 20); // Weiter weg
+      const a = Math.random() * Math.PI * 2;
+      const sx = this.center.x + Math.sin(a) * r;
+      const sz = this.center.z + Math.cos(a) * r;
+      const sy = 15 + Math.random() * 10; // 15-25 Meter Höhe
+      spawnPos = new THREE.Vector3(sx, sy, sz);
+    } else if (this.environment) {
+      // Environment-Manager findet freie Position für Bodengegner
       spawnPos = this.environment.findFreeSpawnPosition(
-        this.center, 
-        this.cfg.spawnRadius - 10, 
+        this.center,
+        this.cfg.spawnRadius - 10,
         this.cfg.spawnRadius + 20
       );
     } else {
-      // Fallback: alte Methode
+      // Fallback: alte Methode für Bodengegner
       const r = this.cfg.spawnRadius + (Math.random()*10 - 5);
       const a = Math.random()*Math.PI*2;
       const sx = this.center.x + Math.sin(a) * r;
@@ -646,36 +1201,52 @@ export class EnemyManager {
       this.spawns.createSpawnEffect(spawnPos, enemyType);
     }
 
-    // Walker für heavy enemies, normale Enemy für andere
-    const enemy = enemyType === 'heavy'
-      ? new WalkerEnemy({
-          scene: this.scene,
-          target: this.center,
-          hitFx: this.hitFx,
-          explosions: this.explosions,
-          environment: this.environment,
-          spawnPos: spawnPos,
-          health: enemyData.health,
-          speed: enemyData.speed,
-          reward: enemyData.reward,
-          attackRadius: this.cfg.attackRadius,
-          hitRadius: enemyData.hitRadius
-        })
-      : new Enemy(enemyType, {
-          scene: this.scene,
-          target: this.center,
-          hitFx: this.hitFx,
-          explosions: this.explosions,
-          environment: this.environment,
-          spawnPos: spawnPos,
-          ground: true,
-          health: enemyData.health,
-          speed: enemyData.speed,
-          reward: enemyData.reward,
-          attackRadius: this.cfg.attackRadius,
-          scale: enemyData.scale,
-          hitRadius: enemyData.hitRadius
-        });
+    // Verschiedene Enemy-Typen erstellen
+    let enemy;
+    if (enemyType === 'heavy') {
+      enemy = new WalkerEnemy({
+        scene: this.scene,
+        target: this.center,
+        hitFx: this.hitFx,
+        explosions: this.explosions,
+        environment: this.environment,
+        spawnPos: spawnPos,
+        health: enemyData.health,
+        speed: enemyData.speed,
+        reward: enemyData.reward,
+        attackRadius: this.cfg.attackRadius,
+        hitRadius: enemyData.hitRadius
+      });
+    } else if (enemyType === 'tiefighter') {
+      enemy = new TieFighterEnemy({
+        scene: this.scene,
+        target: this.center,
+        hitFx: this.hitFx,
+        explosions: this.explosions,
+        spawnPos: spawnPos,
+        health: enemyData.health,
+        speed: enemyData.speed,
+        reward: enemyData.reward,
+        hitRadius: enemyData.hitRadius,
+        onPlayerHit: this.onBaseHit // TieFighter kann Spieler treffen
+      });
+    } else {
+      enemy = new Enemy(enemyType, {
+        scene: this.scene,
+        target: this.center,
+        hitFx: this.hitFx,
+        explosions: this.explosions,
+        environment: this.environment,
+        spawnPos: spawnPos,
+        ground: true,
+        health: enemyData.health,
+        speed: enemyData.speed,
+        reward: enemyData.reward,
+        attackRadius: this.cfg.attackRadius,
+        scale: enemyData.scale,
+        hitRadius: enemyData.hitRadius
+      });
+    }
 
     // onDeath Callback für beide Enemy-Typen setzen
     enemy.onDeath = (data) => {
@@ -746,6 +1317,13 @@ export class EnemyManager {
       const dx = gp.x - this.center.x;
       const dz = gp.z - this.center.z;
       const distXZ = Math.hypot(dx, dz);
+
+      // TieFighter haben keinen Kollisionsschaden, überspringen
+      if (e.attackRadius === 0) {
+        e.update(dt);
+        if (e.dead === true) this.enemies.splice(i,1);
+        continue;
+      }
 
       // Treffer-Bonus: berücksichtige (halbe) Gegner-Hitkugel für „Kontakt"
       const reachWithRadius = reachR + (e.radius || 0) * 0.5;

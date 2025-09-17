@@ -35,13 +35,32 @@ export class GunSystem {
       c.addEventListener('selectend',   ()=>{ this.trigPressed[i] = false; });
     });
 
+    // Desktop-Shooting mit Space-Taste für Debugging
+    this.desktopShooting = false;
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          this.desktopShooting = true;
+          console.log('Desktop shooting: START');
+        }
+      });
+      window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          this.desktopShooting = false;
+          console.log('Desktop shooting: STOP');
+        }
+      });
+    }
+
     // Eigene Geometrien ignorieren
     this.markIgnore(turret.root);
     if (muzzleFx?.sprite) this.markIgnore(muzzleFx.sprite);
   }
 
   markIgnore(obj) { obj.traverse ? obj.traverse(o => { o.userData.ignoreHit = true; }) : (obj.userData.ignoreHit = true); }
-  isFiring() { return this.trigPressed[0] || this.trigPressed[1]; }
+  isFiring() { return this.trigPressed[0] || this.trigPressed[1] || this.desktopShooting; }
 
   pulseShot() {
     const amp = CONFIG.haptics.shotAmp, ms = CONFIG.haptics.shotMs;

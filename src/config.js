@@ -186,6 +186,15 @@ export const CONFIG = {
       scale: 2.2,        // Größe bleibt gleich
       hitRadius: 1.0,    // Größere Hitbox zum Ausgleich
       spawnWeight: 0.1   // 10% Wahrscheinlichkeit
+    },
+
+    tiefighter: {
+      speed: 8.0,        // Schneller Luftgegner
+      health: 50,        // Mehr HP - sollte 4-5 Treffer überleben
+      reward: 20,        // Guter Reward für Schwierigkeit
+      scale: 2.5,        // 2.5 Meter Größe
+      hitRadius: 0.8,    // Kleinere Hitbox - schwerer zu treffen
+      spawnWeight: 0.15  // 15% Wahrscheinlichkeit
     }
   },
 
