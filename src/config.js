@@ -9,11 +9,12 @@ export const CONFIG = {
   targetFPS: 90,
   groundSize: 400,
 
-  sky: { topColor: 0x0b1220, bottomColor: 0x152237 },
+  sky: { topColor: 0x4a6b8a, bottomColor: 0x2a4560 },
 
   lights: {
-    hemi: { sky: 0xcfe3ff, ground: 0x2a3442, intensity: 0.65 },
-    dir:  { color: 0xffffff, intensity: 1.0, position: [10, 15, 6] }
+    hemi: { sky: 0xe6f2ff, ground: 0x4a5968, intensity: 1.2 },
+    dir:  { color: 0xffffff, intensity: 2.0, position: [10, 15, 6] },
+    ambient: { color: 0x6688aa, intensity: 0.4 }
   },
 
   // Grip-Handling
@@ -85,8 +86,8 @@ export const CONFIG = {
   // UI
   ui: {
     heatBar: {
-      offset: [0.35, 0.18, 0.32],
-      size: [0.28, 0.035],
+      offset: [0, 0.18, -0.05],    // Zentral zwischen den Griffen, weiter vor
+      size: [0.20, 0.025],         // Kompakter
       background: 0x10161f,
       fill: 0x93b5ff
     }
@@ -107,7 +108,7 @@ export const CONFIG = {
 
     side: {
       spread: 0.28,     // weiter außen am Housing
-      forward: 0.10,    // etwas nach vorn
+      forward: -0.05,   // weiter nach hinten (Richtung Spieler)
       height: 0.02,     // nah am Pivot
       length: 0.16,
       radius: 0.03,
@@ -153,13 +154,32 @@ export const CONFIG = {
     spawnInterval: 0.35,
     wavePause: 4.0,
 
-    // Sichtbarkeit/Hitbox größer, aber gleiche „DNA“
+    // Verschiedene Gegnertypen
     grunt: {
       speed: 3.0,
       health: 40,
       reward: 10,
-      scale: 1.6,        // NEU: größer darstellen
-      hitRadius: 0.55    // NEU: größere (unsichtbare) Trefferkugel
+      scale: 1.6,
+      hitRadius: 0.55,
+      spawnWeight: 0.7  // 70% Wahrscheinlichkeit
+    },
+    
+    fast: {
+      speed: 5.5,
+      health: 25,
+      reward: 15,
+      scale: 1.2,
+      hitRadius: 0.4,
+      spawnWeight: 0.2  // 20% Wahrscheinlichkeit
+    },
+    
+    heavy: {
+      speed: 1.8,
+      health: 120,
+      reward: 30,
+      scale: 2.2,
+      hitRadius: 0.8,
+      spawnWeight: 0.1  // 10% Wahrscheinlichkeit
     }
   },
 

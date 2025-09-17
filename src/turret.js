@@ -140,16 +140,17 @@ export class Turret {
       this.leftHandle  = new THREE.Mesh(geo, mat.clone());
       this.rightHandle = new THREE.Mesh(geo, mat.clone());
 
-      this.leftHandle.position.set(-spread, height, -forward);
-      this.rightHandle.position.set(+spread, height, -forward);
+      this.leftHandle.position.set(-spread, height, forward);
+      this.rightHandle.position.set(+spread, height, forward);
 
       this.leftHandle.rotation.x = tiltIn;
       this.rightHandle.rotation.x = tiltIn;
 
-      const lBracket = makeBracket(0.04, 0.04, forward + 0.06);
+      const bracketDepth = Math.abs(forward) + 0.06;
+      const lBracket = makeBracket(0.04, 0.04, bracketDepth);
       const rBracket = lBracket.clone();
-      lBracket.position.set(-spread, height, -(forward*0.5));
-      rBracket.position.set(+spread, height, -(forward*0.5));
+      lBracket.position.set(-spread, height, forward*0.5);
+      rBracket.position.set(+spread, height, forward*0.5);
 
       this.pitchPivot.add(this.leftHandle, this.rightHandle, lBracket, rBracket);
 

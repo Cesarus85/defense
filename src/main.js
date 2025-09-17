@@ -9,10 +9,11 @@ import { createInput } from './input.js';
 import { Turret } from './turret.js';
 
 import { AudioManager } from './audio.js';
-import { MuzzleFlash, HitSparks, TracerPool, GameOverBanner3D } from './fx.js';
+import { MuzzleFlash, HitSparks, TracerPool, GameOverBanner3D, ExplosionEffects, SpawnEffects, Killfeed3D, ScoreDisplay3D } from './fx.js';
 import { HeatBar3D } from './ui.js';
 import { GunSystem } from './gun.js';
 import { EnemyManager } from './enemies.js';
+import { EnvironmentManager } from './environment.js';
 
 let scene, camera, renderer;
 let input, turret;
@@ -27,6 +28,11 @@ const STEP2 = {
   gun: null,
   tracers: null,
   gameOver3D: null,
+  explosions: null,
+  spawns: null,
+  killfeed: null,
+  scoreUI: null,
+  environment: null,
 };
 
 // Enemies / Score / Base
@@ -66,8 +72,8 @@ function init() {
   camera.position.set(0, 1.6, 2);
   scene.add(camera);
 
-  // Sky (einfacher Gradient + Fog)
-  scene.fog = new THREE.FogExp2(0x0b0f14, 0.0008);
+  // Sky (hellerer Gradient + reduzierter Fog)
+  scene.fog = new THREE.FogExp2(0x2a4560, 0.0004);
   const skyGeo = new THREE.SphereGeometry(1200, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -86,22 +92,30 @@ function init() {
   });
   scene.add(new THREE.Mesh(skyGeo, skyMat));
 
-  // Lights
+  // Lights (heller und mehr Beleuchtung)
   scene.add(new THREE.HemisphereLight(CONFIG.lights.hemi.sky, CONFIG.lights.hemi.ground, CONFIG.lights.hemi.intensity));
   const dir = new THREE.DirectionalLight(CONFIG.lights.dir.color, CONFIG.lights.dir.intensity);
-  dir.position.set(CONFIG.lights.dir.position);
+  dir.position.set(...CONFIG.lights.dir.position);
+  dir.castShadow = true;
+  dir.shadow.mapSize.width = 2048;
+  dir.shadow.mapSize.height = 2048;
   scene.add(dir);
 
-  // Ground + Grid
+  // Zusätzliches Ambiente-Licht
+  if (CONFIG.lights.ambient) {
+    scene.add(new THREE.AmbientLight(CONFIG.lights.ambient.color, CONFIG.lights.ambient.intensity));
+  }
+
+  // Ground + Grid (hellere Farben)
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(CONFIG.groundSize, CONFIG.groundSize),
-    new THREE.MeshStandardMaterial({ color: 0x202a36, roughness: 1, metalness: 0 })
+    new THREE.MeshStandardMaterial({ color: 0x3a4a5a, roughness: 0.8, metalness: 0.1 })
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x2e3b4b, 0x1b2430);
+  const grid = new THREE.GridHelper(CONFIG.groundSize, 80, 0x5a6a7a, 0x404a5a);
   grid.position.y = 0.01;
   scene.add(grid);
 
@@ -139,8 +153,19 @@ function initStep2Systems() {
   STEP2.hitFx     = new HitSparks(scene);
   STEP2.heatUI    = new HeatBar3D(scene, turret);
   STEP2.tracers   = new TracerPool(scene);
+  STEP2.explosions = new ExplosionEffects(scene);
+  STEP2.spawns    = new SpawnEffects(scene);
+  STEP2.killfeed  = new Killfeed3D(scene);
+  STEP2.scoreUI   = new ScoreDisplay3D(scene, turret);
+  STEP2.environment = new EnvironmentManager(scene);
   STEP2.gun       = new GunSystem(renderer, scene, camera, turret, STEP2.audio, STEP2.muzzleFx, STEP2.hitFx, STEP2.heatUI, STEP2.tracers);
   STEP2.gameOver3D = new GameOverBanner3D(scene);
+  
+  // Score-Anzeige initial setzen
+  STEP2.scoreUI.updateScore(0, 1, 0);
+  
+  // Umgebung laden (asynchron)
+  STEP2.environment.loadEnvironment(turret.root.position);
 }
 
 function initScoreUI() {
@@ -238,6 +263,9 @@ function updateScoreUI({ wave, alive } = {}) {
   const w = (wave ?? enemyMgr?.wave ?? 1);
   const a = (alive ?? enemyMgr?.alive ?? 0);
   scoreEl.textContent = `Score: ${score}  |  Wave: ${w}  |  Enemies: ${a}`;
+  
+  // 3D Score UI aktualisieren
+  STEP2.scoreUI?.updateScore(score, w, a);
 }
 
 function updateBaseUI() {
@@ -253,11 +281,26 @@ function initEnemies() {
     STEP2.hitFx,
     // Score/Wave Callback
     (e) => {
-      if (e.type === 'kill') { score += e.reward || 0; updateScoreUI({ alive: e.alive }); }
-      if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
+      if (e.type === 'kill') { 
+        score += e.reward || 0; 
+        updateScoreUI({ alive: e.alive });
+        // Killfeed-Nachricht hinzufügen
+        const bonus = e.zone === 'head' ? ' HEADSHOT!' : '';
+        STEP2.killfeed?.push(`+${e.reward}${bonus}`, 2.0);
+      }
+      if (e.type === 'wave') { 
+        updateScoreUI({ wave: e.wave }); 
+        STEP2.killfeed?.push(`Wave ${e.wave}`, 3.0);
+      }
     },
     // Base-Hit Callback
-    (e) => { onBaseHit(e.pos); }
+    (e) => { onBaseHit(e.pos); },
+    // Explosion Effects
+    STEP2.explosions,
+    // Spawn Effects
+    STEP2.spawns,
+    // Environment Manager (für Kollisionserkennung)
+    STEP2.environment
   );
 }
 
@@ -307,10 +350,21 @@ function restartGame() {
     CONFIG.enemies,
     STEP2.hitFx,
     (e) => {
-      if (e.type === 'kill') { score += e.reward || 0; updateScoreUI({ alive: e.alive }); }
-      if (e.type === 'wave') { updateScoreUI({ wave: e.wave }); }
+      if (e.type === 'kill') { 
+        score += e.reward || 0; 
+        updateScoreUI({ alive: e.alive });
+        const bonus = e.zone === 'head' ? ' HEADSHOT!' : '';
+        STEP2.killfeed?.push(`+${e.reward}${bonus}`, 2.0);
+      }
+      if (e.type === 'wave') { 
+        updateScoreUI({ wave: e.wave }); 
+        STEP2.killfeed?.push(`Wave ${e.wave}`, 3.0);
+      }
     },
-    (e) => { onBaseHit(e.pos); }
+    (e) => { onBaseHit(e.pos); },
+    STEP2.explosions,
+    STEP2.spawns,
+    STEP2.environment
   );
 
   // Overlays schließen
@@ -393,6 +447,10 @@ function startLoop() {
     STEP2.hitFx.update(dt);
     STEP2.heatUI.update(camera);
     STEP2.tracers?.update(dt);
+    STEP2.explosions?.update(dt, getCurrentCamera());
+    STEP2.spawns?.update(dt, getCurrentCamera());
+    STEP2.killfeed?.update(getCurrentCamera(), dt);
+    STEP2.scoreUI?.update(getCurrentCamera(), dt);
     STEP2.gameOver3D?.update(getCurrentCamera(), dt);
 
     if (enemyMgr) {

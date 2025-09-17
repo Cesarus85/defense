@@ -48,21 +48,57 @@ export class HitSparks {
     this.active = [];
   }
 
-  spawnAt(point, normal) {
-    const s = this.pool.pop() || makeSpark();
-    s.position.copy(point);
-    s.lookAt(point.clone().add(normal));
-    s.userData.life = 0.08;
-    s.material.opacity = 0.9;
-    this.scene.add(s);
-    this.active.push(s);
+  spawnAt(point, normal, intensity = 1.0) {
+    // Mehr Funken basierend auf Intensität
+    const sparkCount = Math.floor(3 + intensity * 4);
+    
+    for (let i = 0; i < sparkCount; i++) {
+      const s = this.pool.pop() || makeSpark();
+      
+      // Zufällige Streuung
+      const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * 0.3,
+        (Math.random() - 0.5) * 0.3,
+        (Math.random() - 0.5) * 0.3
+      );
+      s.position.copy(point).add(offset);
+      
+      // Verschiedene Größen
+      const scale = 0.1 + Math.random() * 0.2;
+      s.scale.setScalar(scale);
+      
+      // Zufällige Richtung basierend auf Normal
+      const randomDir = normal.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 0.8,
+        (Math.random() - 0.5) * 0.8, 
+        (Math.random() - 0.5) * 0.8
+      )).normalize();
+      s.lookAt(point.clone().add(randomDir));
+      
+      s.userData.life = 0.05 + Math.random() * 0.08;
+      s.userData.velocity = randomDir.multiplyScalar(2 + Math.random() * 3);
+      s.userData.gravity = -9.8;
+      s.material.opacity = 0.9;
+      
+      this.scene.add(s);
+      this.active.push(s);
+    }
   }
 
   update(dt) {
     for (let i = this.active.length - 1; i >= 0; i--) {
       const s = this.active[i];
       s.userData.life -= dt;
-      s.material.opacity = Math.max(0, s.userData.life * 8);
+      
+      // Physik-Simulation für Funken
+      if (s.userData.velocity) {
+        s.position.addScaledVector(s.userData.velocity, dt);
+        s.userData.velocity.y += s.userData.gravity * dt;
+        s.userData.velocity.multiplyScalar(0.95); // Luftwiderstand
+      }
+      
+      s.material.opacity = Math.max(0, s.userData.life * 12);
+      
       if (s.userData.life <= 0) {
         this.scene.remove(s);
         this.active.splice(i, 1);
@@ -290,6 +326,319 @@ function makeCircleTexture(size = 128, hex = 0xffcc88) {
 
 
 // == 3D Killfeed (STEP 5) =======================================
+// == Explosionseffekte =========================================
+export class ExplosionEffects {
+  constructor(scene) {
+    this.scene = scene;
+    this.pool = [];
+    this.active = [];
+  }
+
+  createExplosion(position, size = 1.0, color = 0xff6600) {
+    // Haupt-Explosions-Sprite
+    const explosion = this.pool.pop() || this._makeExplosionSprite();
+    explosion.position.copy(position);
+    explosion.scale.setScalar(0.1);
+    explosion.material.color.setHex(color);
+    explosion.material.opacity = 1.0;
+    explosion.userData.life = 0.3;
+    explosion.userData.maxLife = 0.3;
+    explosion.userData.targetScale = size;
+    
+    this.scene.add(explosion);
+    this.active.push(explosion);
+
+    // Rauch-Partikel
+    for (let i = 0; i < 8; i++) {
+      const smoke = this._makeSmokeParticle();
+      const offset = new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        Math.random() * 2,
+        (Math.random() - 0.5) * 2
+      );
+      smoke.position.copy(position).add(offset);
+      smoke.userData.velocity = offset.normalize().multiplyScalar(3 + Math.random() * 2);
+      smoke.userData.life = 1.0 + Math.random() * 0.5;
+      smoke.userData.maxLife = smoke.userData.life;
+      
+      this.scene.add(smoke);
+      this.active.push(smoke);
+    }
+  }
+
+  _makeExplosionSprite() {
+    const texture = makeCircleTexture(256, 0xff6600);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.userData.ignoreHit = true;
+    sprite.userData.type = 'explosion';
+    return sprite;
+  }
+
+  _makeSmokeParticle() {
+    const texture = makeCircleTexture(128, 0x666666);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.4
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.setScalar(0.3);
+    sprite.userData.ignoreHit = true;
+    sprite.userData.type = 'smoke';
+    return sprite;
+  }
+
+  update(dt, camera) {
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const p = this.active[i];
+      p.userData.life -= dt;
+      
+      if (p.userData.type === 'explosion') {
+        // Explosion wächst und verblasst
+        const progress = 1 - (p.userData.life / p.userData.maxLife);
+        const scale = progress * p.userData.targetScale;
+        p.scale.setScalar(scale);
+        p.material.opacity = 1 - progress;
+        
+        if (camera) p.lookAt(camera.position);
+      } else if (p.userData.type === 'smoke') {
+        // Rauch steigt auf und verblasst
+        if (p.userData.velocity) {
+          p.position.addScaledVector(p.userData.velocity, dt);
+          p.userData.velocity.multiplyScalar(0.98);
+          p.userData.velocity.y += 1 * dt; // nach oben treiben
+        }
+        
+        const progress = 1 - (p.userData.life / p.userData.maxLife);
+        p.scale.setScalar(0.3 + progress * 0.7);
+        p.material.opacity = 0.4 * (1 - progress);
+        
+        if (camera) p.lookAt(camera.position);
+      }
+      
+      if (p.userData.life <= 0) {
+        this.scene.remove(p);
+        this.active.splice(i, 1);
+        this.pool.push(p);
+      }
+    }
+  }
+}
+
+// == Spawn-Effekte für Gegner ===================================
+export class SpawnEffects {
+  constructor(scene) {
+    this.scene = scene;
+    this.pool = [];
+    this.active = [];
+  }
+
+  createSpawnEffect(position, enemyType = 'grunt') {
+    // Teleportations-Ring
+    const ring = this.pool.pop() || this._makeSpawnRing();
+    ring.position.copy(position);
+    ring.position.y += 0.1;
+    ring.scale.setScalar(0.1);
+    ring.rotation.x = -Math.PI / 2; // Flach auf dem Boden
+    
+    // Farbe je nach Gegnertyp
+    let color = 0x66aaff;
+    switch(enemyType) {
+      case 'fast': color = 0x66ff66; break;
+      case 'heavy': color = 0xff6666; break;
+    }
+    ring.material.color.setHex(color);
+    // Ring Material hat kein emissive property, da es MeshBasicMaterial ist
+    
+    ring.userData.life = 0.5;
+    ring.userData.maxLife = 0.5;
+    ring.userData.targetScale = enemyType === 'heavy' ? 2.5 : (enemyType === 'fast' ? 1.8 : 2.0);
+    
+    this.scene.add(ring);
+    this.active.push(ring);
+
+    // Partikel-Säule
+    for (let i = 0; i < 12; i++) {
+      const particle = this._makeSpawnParticle();
+      particle.position.copy(position);
+      particle.position.y += Math.random() * 3;
+      particle.position.x += (Math.random() - 0.5) * 0.8;
+      particle.position.z += (Math.random() - 0.5) * 0.8;
+      
+      particle.material.color.setHex(color);
+      particle.userData.velocity = new THREE.Vector3(0, 2 + Math.random() * 3, 0);
+      particle.userData.life = 0.8 + Math.random() * 0.4;
+      particle.userData.maxLife = particle.userData.life;
+      
+      this.scene.add(particle);
+      this.active.push(particle);
+    }
+  }
+
+  _makeSpawnRing() {
+    const geometry = new THREE.RingGeometry(0.8, 1.2, 32);
+    const material = new THREE.MeshBasicMaterial({
+      color: 0x66aaff,
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending
+    });
+    const ring = new THREE.Mesh(geometry, material);
+    ring.userData.ignoreHit = true;
+    ring.userData.type = 'spawn_ring';
+    return ring;
+  }
+
+  _makeSpawnParticle() {
+    const texture = makeCircleTexture(64, 0x66aaff);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.setScalar(0.2);
+    sprite.userData.ignoreHit = true;
+    sprite.userData.type = 'spawn_particle';
+    return sprite;
+  }
+
+  update(dt, camera) {
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const effect = this.active[i];
+      effect.userData.life -= dt;
+      
+      if (effect.userData.type === 'spawn_ring') {
+        // Ring wächst und verblasst
+        const progress = 1 - (effect.userData.life / effect.userData.maxLife);
+        const scale = progress * effect.userData.targetScale;
+        effect.scale.setScalar(scale);
+        effect.material.opacity = 0.8 * (1 - progress);
+        
+        // Langsame Rotation
+        effect.rotation.z += dt * 2;
+      } else if (effect.userData.type === 'spawn_particle') {
+        // Partikel steigen auf
+        if (effect.userData.velocity) {
+          effect.position.addScaledVector(effect.userData.velocity, dt);
+          effect.userData.velocity.multiplyScalar(0.96); // Abbremsen
+        }
+        
+        const progress = 1 - (effect.userData.life / effect.userData.maxLife);
+        effect.material.opacity = 1 - progress;
+        
+        if (camera) effect.lookAt(camera.position);
+      }
+      
+      if (effect.userData.life <= 0) {
+        this.scene.remove(effect);
+        this.active.splice(i, 1);
+        this.pool.push(effect);
+      }
+    }
+  }
+}
+
+// == 3D Score Display ===========================================
+export class ScoreDisplay3D {
+  constructor(scene, turret) {
+    this.scene = scene;
+    this.turret = turret;
+    this.group = new THREE.Group();
+    this.mesh = null;
+    this.score = 0;
+    this.wave = 1;
+    this.enemies = 0;
+    this.lastCamPos = null;
+    
+    // Am Turret befestigen, flach auf der Oberseite
+    this.turret.yawPivot.add(this.group);
+    this.group.position.set(0, 0.14, 0.10); // 5cm zurück, weg vom Kanonenlauf
+    this.group.rotation.x = -Math.PI / 2; // Komplett flach (90° nach unten)
+  }
+
+  updateScore(score, wave, enemies) {
+    this.score = score;
+    this.wave = wave;
+    this.enemies = enemies;
+    this._updateText();
+  }
+
+  _updateText() {
+    if (this.mesh) {
+      this.group.remove(this.mesh);
+    }
+
+    const text = `Score: ${this.score}\nWave: ${this.wave}\nEnemies: ${this.enemies}`;
+    this.mesh = this._makeTextPlane(text);
+    this.mesh.visible = true; // Sicherstellen, dass es sichtbar ist
+    this.group.add(this.mesh); // Zur Gruppe hinzufügen, nicht direkt zur Szene
+    console.log('Score UI updated:', text); // Debug
+  }
+
+  _makeTextPlane(text) {
+    const lines = text.split('\n');
+    const lineHeight = 28;  // Kompakter
+    const pad = 8;          // Weniger Padding
+    const font = 'bold 20px system-ui, sans-serif'; // Kleinere Schrift
+    
+    const tmp = document.createElement('canvas');
+    const ctx = tmp.getContext('2d');
+    ctx.font = font;
+    
+    let maxWidth = 0;
+    for (const line of lines) {
+      maxWidth = Math.max(maxWidth, ctx.measureText(line).width);
+    }
+    
+    const tw = Math.ceil(maxWidth) + pad * 2;
+    const th = lines.length * lineHeight + pad * 2;
+
+    const c = document.createElement('canvas');
+    c.width = tw;
+    c.height = th;
+    const g = c.getContext('2d');
+    
+    // Dunklerer, kontrastreicherer Hintergrund
+    g.fillStyle = 'rgba(0,0,0,0.9)';
+    g.fillRect(0, 0, tw, th);
+    g.strokeStyle = 'rgba(100,200,255,0.6)';
+    g.lineWidth = 2;
+    g.strokeRect(1, 1, tw-2, th-2);
+    
+    // Text mit besserem Kontrast
+    g.font = font;
+    g.fillStyle = '#ffffff';  // Weißer Text für maximalen Kontrast
+    g.textBaseline = 'top';
+    
+    for (let i = 0; i < lines.length; i++) {
+      g.fillText(lines[i], pad, pad + i * lineHeight);
+    }
+
+    const tx = new THREE.CanvasTexture(c);
+    tx.colorSpace = THREE.SRGBColorSpace;
+    const mat = new THREE.MeshBasicMaterial({ map: tx, transparent: true, depthWrite: false });
+    const geo = new THREE.PlaneGeometry(tw/600, th/600); // Noch kleiner für Turret-Oberfläche
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.userData.ignoreHit = true;
+    return mesh;
+  }
+
+  update(camera, dt = 0.016) {
+    // Score-Anzeige liegt flach auf der Turret-Oberfläche - kein LookAt nötig
+    // Sie dreht sich automatisch mit dem Turret mit
+  }
+}
+
 export class Killfeed3D {
   constructor(scene) {
     this.scene = scene;
@@ -298,31 +647,36 @@ export class Killfeed3D {
   }
 
   _makeTextPlane(text) {
-    const pad = 12;
-    const font = 'bold 28px system-ui, sans-serif';
+    const pad = 8;
+    const font = 'bold 32px system-ui, sans-serif';
     const tmp = document.createElement('canvas');
     const ctx = tmp.getContext('2d');
     ctx.font = font;
     const tw = Math.ceil(ctx.measureText(text).width) + pad*2;
-    const th = 44;
+    const th = 48;
 
     const c = document.createElement('canvas'); c.width = tw; c.height = th;
     const g = c.getContext('2d');
-    // BG
-    g.fillStyle = 'rgba(10,16,24,0.78)';
-    g.fillRect(0,0,tw,th);
-    g.strokeStyle = 'rgba(160,200,255,0.25)';
-    g.strokeRect(0.5,0.5,tw-1,th-1);
-    // Text
+    
+    // Kein Hintergrund mehr - transparentes Canvas
+    g.clearRect(0, 0, tw, th);
+    
+    // Text mit Schatten für bessere Lesbarkeit
     g.font = font;
-    g.fillStyle = '#d9f0ff';
     g.textBaseline = 'middle';
+    
+    // Schatten
+    g.fillStyle = 'rgba(0,0,0,0.8)';
+    g.fillText(text, pad + 2, th/2 + 2);
+    
+    // Haupttext
+    g.fillStyle = '#ffffff';
     g.fillText(text, pad, th/2);
 
     const tx = new THREE.CanvasTexture(c);
     tx.colorSpace = THREE.SRGBColorSpace;
     const mat = new THREE.MeshBasicMaterial({ map: tx, transparent: true, depthWrite: false });
-    const geo = new THREE.PlaneGeometry(tw/220, th/220);
+    const geo = new THREE.PlaneGeometry(tw/180, th/180); // Etwas größer für bessere Sichtbarkeit
     const mesh = new THREE.Mesh(geo, mat);
     mesh.userData.ignoreHit = true;
     mesh.visible = true;

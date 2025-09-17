@@ -4,6 +4,7 @@ import { CONFIG } from './config.js';
 export class HeatBar3D {
   constructor(scene, turret) {
     this.group = new THREE.Group();
+    this.lastCamPos = null;
     const [w,h] = CONFIG.ui.heatBar.size;
 
     const bg = new THREE.Mesh(
@@ -34,6 +35,18 @@ export class HeatBar3D {
     this.fill.material.color.copy(c);
   }
   update(camera) {
-    if (camera) this.group.lookAt(camera.position);
+    // Weniger aggressives LookAt um Flackern zu reduzieren
+    if (camera) {
+      const camPos = new THREE.Vector3();
+      camera.getWorldPosition(camPos);
+      const currentPos = this.group.getWorldPosition(new THREE.Vector3());
+      
+      // Nur lookAt wenn sich die Kamera deutlich bewegt hat
+      const dist = camPos.distanceTo(this.lastCamPos || camPos);
+      if (dist > 0.1) {
+        this.group.lookAt(camPos);
+        this.lastCamPos = camPos.clone();
+      }
+    }
   }
 }
