@@ -10,7 +10,7 @@ import { Turret } from './turret.js';
 
 import { AudioManager } from './audio.js';
 import { MuzzleFlash, HitSparks, TracerPool, GameOverBanner3D, ExplosionEffects, SpawnEffects, Killfeed3D, ScoreDisplay3D } from './fx.js';
-import { HeatBar3D } from './ui.js';
+import { HeatBar3D, BaseHealthBar3D } from './ui.js';
 import { GunSystem } from './gun.js';
 import { EnemyManager } from './enemies.js';
 import { EnvironmentManager } from './environment.js';
@@ -25,6 +25,7 @@ const STEP2 = {
   muzzleFx: null,
   hitFx: null,
   heatUI: null,
+  baseUI: null,
   gun: null,
   tracers: null,
   gameOver3D: null,
@@ -138,9 +139,11 @@ function init() {
     resetDeltaBaseline();
     if (gameOverEl) gameOverEl.style.display = 'none';
     setupXRExitInteraction();
+    updateBaseUI();
   });
   renderer.xr.addEventListener('sessionend', () => {
     if (isGameOver && gameOverEl) gameOverEl.style.display = 'flex';
+    updateBaseUI();
   });
 
   // Desktop: initial platzieren
@@ -168,6 +171,7 @@ function initStep2Systems() {
   STEP2.muzzleFx  = new MuzzleFlash(turret, CONFIG.fire.muzzleOffset);
   STEP2.hitFx     = new HitSparks(scene);
   STEP2.heatUI    = new HeatBar3D(scene, turret);
+  STEP2.baseUI    = new BaseHealthBar3D(scene, turret);
   STEP2.tracers   = new TracerPool(scene);
   STEP2.explosions = new ExplosionEffects(scene);
   STEP2.spawns    = new SpawnEffects(scene);
@@ -179,7 +183,8 @@ function initStep2Systems() {
   
   // Score-Anzeige initial setzen
   STEP2.scoreUI.updateScore(0, 1, 0);
-  
+  STEP2.baseUI?.setHealth(baseHP, CONFIG.base?.maxHP ?? 100);
+
   // Umgebung laden (asynchron)
   STEP2.environment.loadEnvironment(turret.root.position);
 }
@@ -286,7 +291,16 @@ function updateScoreUI({ wave, alive } = {}) {
 
 function updateBaseUI() {
   const maxHP = CONFIG.base?.maxHP ?? 100;
-  baseEl.textContent = `Base HP: ${Math.max(0, Math.floor(baseHP))} / ${maxHP}`;
+  STEP2.baseUI?.setHealth(baseHP, maxHP);
+
+  if (!baseEl) return;
+
+  if (renderer?.xr?.isPresenting) {
+    baseEl.style.display = 'none';
+  } else {
+    baseEl.style.display = 'block';
+    baseEl.textContent = `Base HP: ${Math.max(0, Math.floor(baseHP))} / ${maxHP}`;
+  }
 }
 
 function initEnemies() {
@@ -461,13 +475,15 @@ function startLoop() {
     STEP2.gun.update(dt);
     STEP2.muzzleFx.update(dt, camera);
     STEP2.hitFx.update(dt);
-    STEP2.heatUI.update(camera);
+    const activeCamera = getCurrentCamera();
+    STEP2.heatUI.update(activeCamera);
+    STEP2.baseUI?.update(activeCamera);
     STEP2.tracers?.update(dt);
-    STEP2.explosions?.update(dt, getCurrentCamera());
-    STEP2.spawns?.update(dt, getCurrentCamera());
-    STEP2.killfeed?.update(getCurrentCamera(), dt);
-    STEP2.scoreUI?.update(getCurrentCamera(), dt);
-    STEP2.gameOver3D?.update(getCurrentCamera(), dt);
+    STEP2.explosions?.update(dt, activeCamera);
+    STEP2.spawns?.update(dt, activeCamera);
+    STEP2.killfeed?.update(activeCamera, dt);
+    STEP2.scoreUI?.update(activeCamera, dt);
+    STEP2.gameOver3D?.update(activeCamera, dt);
 
     if (enemyMgr) {
       enemyMgr.update(dt);

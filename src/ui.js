@@ -50,3 +50,66 @@ export class HeatBar3D {
     }
   }
 }
+
+export class BaseHealthBar3D {
+  constructor(scene, turret) {
+    const defaults = {
+      offset: [0.16, 0.18, 0.08],
+      size: [0.05, 0.18],
+      background: 0x1a1010,
+      fill: 0xff6666,
+    };
+    const cfg = Object.assign({}, defaults, CONFIG.ui?.baseBar ?? {});
+
+    this.group = new THREE.Group();
+    this.lastCamPos = null;
+    this.maxHP = CONFIG.base?.maxHP ?? 100;
+    this.value01 = 1;
+
+    const bg = new THREE.Mesh(
+      new THREE.PlaneGeometry(cfg.size[0], cfg.size[1]),
+      new THREE.MeshBasicMaterial({ color: cfg.background, transparent: true, opacity: 0.65 })
+    );
+    const fill = new THREE.Mesh(
+      new THREE.PlaneGeometry(cfg.size[0], cfg.size[1]),
+      new THREE.MeshBasicMaterial({ color: cfg.fill, transparent: true, opacity: 0.95 })
+    );
+
+    bg.userData.ignoreHit = true;
+    fill.userData.ignoreHit = true;
+
+    this.bg = bg;
+    this.fill = fill;
+    this.group.add(bg, fill);
+
+    turret.yawPivot.add(this.group);
+    const [ox, oy, oz] = cfg.offset;
+    this.group.position.set(ox, oy, oz);
+
+    this.setHealth(this.maxHP, this.maxHP);
+  }
+
+  setHealth(current, max) {
+    this.maxHP = max || this.maxHP;
+    const ratio = this.maxHP > 0 ? THREE.MathUtils.clamp(current / this.maxHP, 0, 1) : 0;
+    this.value01 = ratio;
+    this.fill.scale.y = ratio;
+    const h = this.bg.geometry.parameters.height;
+    this.fill.position.y = -h / 2 + (h * ratio) / 2;
+
+    const color = new THREE.Color().setHSL(THREE.MathUtils.lerp(0.02, 0.33, ratio), 0.85, 0.54);
+    this.fill.material.color.copy(color);
+  }
+
+  update(camera) {
+    if (!camera) return;
+
+    const camPos = new THREE.Vector3();
+    camera.getWorldPosition(camPos);
+    const dist = camPos.distanceTo(this.lastCamPos || camPos);
+    if (dist > 0.1) {
+      this.group.lookAt(camPos);
+      this.lastCamPos = camPos.clone();
+    }
+  }
+}
