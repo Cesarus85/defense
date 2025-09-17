@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+const TREE_BASE_SCALE = 11;
+
 export class EnvironmentManager {
   constructor(scene) {
     this.scene = scene;
@@ -61,8 +63,6 @@ export class EnvironmentManager {
 
   placeTrees(tree1Model, tree2Model, turretPos) {
     // Basisskalierung, um die Modellgröße in etwa Meterhöhe umzusetzen
-    const TREE_BASE_SCALE = 11;
-
     const configs = [
       // Ring 1: Mittlere Entfernung (40-60m vom Turret)
       { distance: 45, angle: 30, model: tree1Model, scale: 1.2 },
