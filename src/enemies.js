@@ -677,9 +677,26 @@ export class EnemyManager {
           hitRadius: enemyData.hitRadius
         });
 
-    enemy.onDeath = ({ reward, zone }) => {
-      this.alive = Math.max(0, this.alive - 1);
-      this.onScore({ type: 'kill', reward, zone, wave: this.wave, alive: this.alive });
+    // onDeath Callback für beide Enemy-Typen setzen
+    enemy.onDeath = (data) => {
+      if (data.type === 'kill') {
+        // Walker Enemy Tod
+        this.alive = Math.max(0, this.alive - 1);
+        this.onScore({ type: 'kill', reward: data.reward, zone: data.zone, wave: this.wave, alive: this.alive });
+      } else if (data.type === 'base-hit') {
+        // Base wurde getroffen
+        try { this.onBaseHit({ pos: data.pos }); } catch(_) {}
+        // Walker aus Liste entfernen
+        const index = this.enemies.indexOf(enemy);
+        if (index !== -1) {
+          this.enemies.splice(index, 1);
+          this.alive = Math.max(0, this.alive - 1);
+        }
+      } else if (data.enemy) {
+        // Normale Enemy Tod (alter Stil)
+        this.alive = Math.max(0, this.alive - 1);
+        this.onScore({ type: 'kill', reward: data.reward, zone: data.zone, wave: this.wave, alive: this.alive });
+      }
     };
 
     this.enemies.push(enemy);
@@ -720,20 +737,22 @@ export class EnemyManager {
     const reachR = this.cfg.attackRadius;
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
-      if (e.dead) { this.enemies.splice(i,1); continue; }
+      if (!e || e.dead === true) { this.enemies.splice(i,1); continue; }
 
       // Distanz im XZ zur Basis
-      const gp = e.group.position;
+      const gp = e.group?.position;
+      if (!gp) continue; // Skip if no group or position
+
       const dx = gp.x - this.center.x;
       const dz = gp.z - this.center.z;
       const distXZ = Math.hypot(dx, dz);
 
-      // Treffer-Bonus: berücksichtige (halbe) Gegner-Hitkugel für „Kontakt“
+      // Treffer-Bonus: berücksichtige (halbe) Gegner-Hitkugel für „Kontakt"
       const reachWithRadius = reachR + (e.radius || 0) * 0.5;
 
       if (distXZ <= reachWithRadius) {
         // Basistreffer → visuelle FX + Callback + Entfernen
-        const hitPos = e.group.getWorldPosition(new THREE.Vector3());
+        const hitPos = e.group?.getWorldPosition?.(new THREE.Vector3()) || gp.clone();
 
         // etwas Funken
         if (this.hitFx) {
@@ -751,9 +770,9 @@ export class EnemyManager {
         continue;
       }
 
-      // „normal“ updaten (Laufen/Orientierung)
+      // „normal" updaten (Laufen/Orientierung)
       e.update(dt);
-      if (e.dead) this.enemies.splice(i,1);
+      if (e.dead === true) this.enemies.splice(i,1);
     }
   }
 }
