@@ -569,7 +569,7 @@ export class TieFighterEnemy {
     this.mixer = null;
 
     // Flugverhalten
-    this.flightPhase = 'approach'; // 'approach', 'attack', 'flyover', 'loop', 'return'
+    this.flightPhase = 'approach'; // 'approach', 'attack', 'break', 'return'
     this.flightTime = 0;
     this.attackStartPos = new THREE.Vector3();
     this.loopDirection = Math.random() > 0.5 ? 1 : -1; // Links oder rechts
@@ -577,6 +577,12 @@ export class TieFighterEnemy {
     this.shotInterval = 0.3; // Alle 0.3 Sekunden schießen
     this.attackDistance = 25; // Größere Distanz vom Spieler wo er anfängt zu schießen
     this.pullAwayDistance = 12; // Distanz bei der er abdrehen soll
+    this.turnSpeed = opts.turnSpeed ?? 2.5;
+    this.velocity = new THREE.Vector3(0, 0, -1);
+    this.attackVector = new THREE.Vector3(0, 0, -1);
+    this.lastVelocity = new THREE.Vector3(0, 0, -1);
+    this.maneuver = null;
+    this.returnPosition = null;
 
     // Bewegungsgarantie - TieFighter muss sich IMMER bewegen
     this.lastPosition = new THREE.Vector3();
@@ -833,6 +839,8 @@ export class TieFighterEnemy {
         (Math.random() - 0.5) * 2
       ).normalize();
       this.group.position.addScaledVector(escapeDirection, this.speed * dt);
+      this.velocity.copy(escapeDirection);
+      this.lastVelocity = escapeDirection.clone();
       console.log('Emergency movement applied!');
     }
 
@@ -844,11 +852,8 @@ export class TieFighterEnemy {
       case 'attack':
         this.handleAttackPhase(dt, goalPos, currentPos, distToTarget);
         break;
-      case 'flyover':
-        this.handleFlyoverPhase(dt, goalPos, currentPos);
-        break;
-      case 'loop':
-        this.handleLoopPhase(dt, goalPos, currentPos);
+      case 'break':
+        this.handleBreakPhase(dt, goalPos, currentPos);
         break;
       case 'return':
         this.handleReturnPhase(dt, goalPos, currentPos);
@@ -858,9 +863,12 @@ export class TieFighterEnemy {
     // Immer nach vorne schauen (Flugrichtung)
     if (this.model) {
       const forward = new THREE.Vector3(0, 0, -1);
-      const velocity = this.lastVelocity || forward;
-      if (velocity.length() > 0.1) {
-        this.group.lookAt(currentPos.clone().add(velocity));
+      const velocity = (this.lastVelocity && this.lastVelocity.length() > 0.1)
+        ? this.lastVelocity.clone().normalize()
+        : forward;
+      if (velocity.lengthSq() > 0) {
+        const targetQuat = new THREE.Quaternion().setFromUnitVectors(forward, velocity);
+        this.group.quaternion.slerp(targetQuat, Math.min(1, dt * 3));
       }
     }
   }
@@ -869,23 +877,24 @@ export class TieFighterEnemy {
     // Auf den Spieler zufliegen
     const direction = goalPos.clone().sub(currentPos).normalize();
     direction.y = Math.max(-0.2, direction.y); // Nicht zu steil nach unten
-
-    this.group.position.addScaledVector(direction, this.speed * dt);
-    this.lastVelocity = direction;
+    this.applySteering(direction, 1.0, dt, 1.2);
+    this.attackVector.lerp(direction, 0.05);
 
     // Wenn nah genug, in Angriffsphase wechseln
     if (distToTarget < this.attackDistance) {
       this.flightPhase = 'attack';
       this.flightTime = 0;
       this.attackStartPos.copy(currentPos);
+      this.attackVector.copy(direction);
+      this.loopDirection = Math.random() > 0.5 ? 1 : -1;
     }
   }
 
   handleAttackPhase(dt, goalPos, currentPos, distToTarget) {
     // Weiter auf Spieler zufliegen aber langsamer
     const direction = goalPos.clone().sub(currentPos).normalize();
-    this.group.position.addScaledVector(direction, this.speed * 0.6 * dt);
-    this.lastVelocity = direction;
+    this.applySteering(direction, 0.7, dt, 1.0);
+    this.attackVector.lerp(direction, 0.1);
 
     // Schießen
     this.lastShotTime += dt;
@@ -896,53 +905,96 @@ export class TieFighterEnemy {
 
     // Früher abdrehen um zu nah kommen zu vermeiden
     if (this.flightTime > 1.5 || distToTarget < this.pullAwayDistance) {
-      this.flightPhase = Math.random() > 0.5 ? 'flyover' : 'loop';
-      this.flightTime = 0;
+      const mode = (distToTarget < this.pullAwayDistance && Math.random() > 0.3)
+        ? 'front'
+        : (Math.random() > 0.5 ? 'rear' : 'front');
+      this.startBreakManeuver(mode, goalPos, distToTarget);
     }
   }
 
-  handleFlyoverPhase(dt, goalPos, currentPos) {
-    // Sanfte Kurve über den Spieler hinweg
-    const distToPlayer = currentPos.distanceTo(goalPos);
+  applySteering(desiredDirection, speedMultiplier, dt, turnMultiplier = 1.0) {
+    if (!desiredDirection || desiredDirection.lengthSq() === 0) {
+      return;
+    }
 
-    if (distToPlayer > this.pullAwayDistance) {
-      // Noch nah genug - sanft hochziehen und zur Seite
-      const sideDirection = this.loopDirection; // Bereits gesetzt bei Erstellung
-      const flyDirection = new THREE.Vector3(sideDirection * 0.7, 0.4, 0.8).normalize();
-      this.group.position.addScaledVector(flyDirection, this.speed * 1.1 * dt);
-      this.lastVelocity = flyDirection;
+    const desired = desiredDirection.clone().normalize();
+    const lerpFactor = Math.min(1, this.turnSpeed * turnMultiplier * dt);
+    this.velocity.lerp(desired, lerpFactor);
+    if (this.velocity.lengthSq() === 0) {
+      this.velocity.copy(desired);
     } else {
-      // Weit genug weg - weiter in weitem Bogen
-      const wideDirection = new THREE.Vector3(this.loopDirection * 1.2, 0.2, 1.0).normalize();
-      this.group.position.addScaledVector(wideDirection, this.speed * 1.3 * dt);
-      this.lastVelocity = wideDirection;
+      this.velocity.normalize();
     }
 
-    // Nach 4 Sekunden zurückkehren (länger für weiteren Bogen)
-    if (this.flightTime > 4.0) {
-      this.flightPhase = 'return';
-      this.flightTime = 0;
-    }
+    const moveSpeed = this.speed * speedMultiplier;
+    this.group.position.addScaledVector(this.velocity, moveSpeed * dt);
+    this.lastVelocity = this.velocity.clone();
   }
 
-  handleLoopPhase(dt, goalPos, currentPos) {
-    // Größere seitliche Schleife mit mehr Abstand
-    const angle = this.flightTime * 1.5; // Etwas langsamer für saubere Kurve
-    const radius = 35; // Größerer Radius für weiteren Abstand
-    const loopCenter = goalPos.clone().add(new THREE.Vector3(this.loopDirection * 15, 12, 25)); // Weiter weg vom Spieler
+  startBreakManeuver(mode, goalPos, distToTarget) {
+    const up = new THREE.Vector3(0, 1, 0);
+    const forward = this.attackVector.clone().normalize();
+    if (forward.lengthSq() === 0) {
+      forward.set(0, 0, -1);
+    }
 
-    const newPos = new THREE.Vector3(
-      loopCenter.x + Math.cos(angle) * radius * this.loopDirection,
-      loopCenter.y + Math.sin(angle) * radius * 0.4, // Höhere vertikale Komponente
-      loopCenter.z + Math.sin(angle) * radius * 0.6  // Mehr Tiefe in der Kurve
+    this.loopDirection = Math.random() > 0.5 ? 1 : -1;
+    const side = new THREE.Vector3().crossVectors(forward, up);
+    if (side.lengthSq() === 0) {
+      side.set(1, 0, 0);
+    }
+    side.normalize().multiplyScalar(this.loopDirection * (mode === 'front' ? 22 : 28));
+
+    const vertical = up.clone().multiplyScalar(6 + Math.random() * 3);
+    const forwardOffset = forward.clone().multiplyScalar(
+      mode === 'front'
+        ? Math.max(distToTarget, 10)
+        : -20 - Math.random() * 10
     );
 
-    const direction = newPos.clone().sub(currentPos).normalize();
-    this.group.position.addScaledVector(direction, this.speed * 0.9 * dt); // Etwas langsamer für kontrolliertere Kurve
-    this.lastVelocity = direction;
+    const breakPoint = goalPos.clone().add(side).add(vertical).add(forwardOffset);
+    const exitForward = forward.clone().multiplyScalar(mode === 'front' ? -35 : -45);
+    const exitSide = side.clone().multiplyScalar(0.5);
+    const exitVertical = up.clone().multiplyScalar(12 + Math.random() * 4);
+    const exitPoint = goalPos.clone().add(exitForward).add(exitSide).add(exitVertical);
 
-    // Nach einer vollständigen Schleife zurückkehren
-    if (this.flightTime > (Math.PI * 1.3)) { // Etwas länger für vollständige Kurve
+    this.maneuver = {
+      mode,
+      stage: 'entry',
+      breakPoint,
+      exitPoint
+    };
+
+    this.flightPhase = 'break';
+    this.flightTime = 0;
+    this.returnPosition = null;
+  }
+
+  handleBreakPhase(dt, goalPos, currentPos) {
+    if (!this.maneuver) {
+      this.flightPhase = 'return';
+      this.flightTime = 0;
+      return;
+    }
+
+    const targetPoint = this.maneuver.stage === 'entry'
+      ? this.maneuver.breakPoint
+      : this.maneuver.exitPoint;
+
+    const desired = targetPoint.clone().sub(currentPos);
+    const distance = desired.length();
+    const speedMultiplier = this.maneuver.stage === 'entry' ? 1.0 : 1.2;
+    const turnMultiplier = this.maneuver.stage === 'entry' ? 1.4 : 1.1;
+
+    this.applySteering(desired, speedMultiplier, dt, turnMultiplier);
+
+    if (this.maneuver.stage === 'entry') {
+      if (distance < 12 || this.flightTime > 2.5) {
+        this.maneuver.stage = 'exit';
+        this.flightTime = 0;
+      }
+    } else if (distance < 18 || this.flightTime > 4.5) {
+      this.maneuver = null;
       this.flightPhase = 'return';
       this.flightTime = 0;
     }
@@ -961,12 +1013,11 @@ export class TieFighterEnemy {
       ));
     }
 
-    const direction = this.returnPosition.clone().sub(currentPos).normalize();
-    this.group.position.addScaledVector(direction, this.speed * 0.9 * dt);
-    this.lastVelocity = direction;
+    const desired = this.returnPosition.clone().sub(currentPos);
+    this.applySteering(desired, 0.9, dt, 0.8);
 
     // Wenn nah genug an Return-Position oder nach 5 Sekunden, neuen Angriff starten
-    const distToReturn = currentPos.distanceTo(this.returnPosition);
+    const distToReturn = this.group.position.distanceTo(this.returnPosition);
     if (this.flightTime > 5.0 || distToReturn < 10) {
       this.flightPhase = 'approach';
       this.flightTime = 0;
